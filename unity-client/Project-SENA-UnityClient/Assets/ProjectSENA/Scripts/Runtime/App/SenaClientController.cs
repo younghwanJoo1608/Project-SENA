@@ -16,12 +16,10 @@ namespace ProjectSENA.App
         [SerializeField] private string languageCode = "ko";
 
         [Header("Chat UI")]
-        [SerializeField] private InputField inputField;
         [SerializeField] private TMP_InputField tmpInputField;
         [SerializeField] private Button sendButton;
         [SerializeField] private Text sendButtonText;
         [SerializeField] private TMP_Text sendButtonTmpText;
-        [SerializeField] private Text inputPlaceholderText;
         [SerializeField] private TMP_Text inputPlaceholderTmpText;
         [SerializeField] private RectTransform composerPanelRect;
         [SerializeField] private Text connectionStatusText;
@@ -41,10 +39,7 @@ namespace ProjectSENA.App
         private bool _approvalPending;
         private bool _reactivateInputNextFrame;
         private bool _inputHeightRefreshPending;
-        private bool _submitOnEndEdit;
         private float _composerExtraHeight;
-
-        private bool UsingTmpInput => tmpInputField != null;
 
         private void Awake()
         {
@@ -66,7 +61,7 @@ namespace ProjectSENA.App
                 sendButtonTmpText = sendButton.GetComponentInChildren<TMP_Text>();
             }
 
-            if (UsingTmpInput)
+            if (tmpInputField != null)
             {
                 _inputFieldRect = tmpInputField.GetComponent<RectTransform>();
 
@@ -79,27 +74,10 @@ namespace ProjectSENA.App
                 tmpInputField.onValueChanged.AddListener(HandleInputFieldValueChanged);
                 tmpInputField.onSubmit.AddListener(HandleTmpInputSubmit);
             }
-            else if (inputField != null)
+
+            if (composerPanelRect == null && tmpInputField != null)
             {
-                _inputFieldRect = inputField.GetComponent<RectTransform>();
-
-                if (inputPlaceholderText == null)
-                {
-                    inputPlaceholderText = inputField.placeholder as Text;
-                }
-
-                ConfigureLegacyInputField();
-                inputField.onValueChanged.AddListener(HandleInputFieldValueChanged);
-                inputField.onEndEdit.AddListener(HandleInputFieldEndEdit);
-            }
-
-            if (composerPanelRect == null)
-            {
-                Transform inputTransform = GetInputTransform();
-                if (inputTransform != null)
-                {
-                    composerPanelRect = inputTransform.parent as RectTransform;
-                }
+                composerPanelRect = tmpInputField.transform.parent as RectTransform;
             }
 
             if (composerPanelRect != null && _inputFieldRect != null)
@@ -126,12 +104,6 @@ namespace ProjectSENA.App
                 tmpInputField.onValueChanged.RemoveListener(HandleInputFieldValueChanged);
                 tmpInputField.onSubmit.RemoveListener(HandleTmpInputSubmit);
             }
-
-            if (inputField != null)
-            {
-                inputField.onValueChanged.RemoveListener(HandleInputFieldValueChanged);
-                inputField.onEndEdit.RemoveListener(HandleInputFieldEndEdit);
-            }
         }
 
         private void Update()
@@ -141,37 +113,6 @@ namespace ProjectSENA.App
                 ActivateCurrentInputField();
                 _reactivateInputNextFrame = false;
             }
-
-            if (UsingTmpInput)
-            {
-                return;
-            }
-
-            if (!IsInputFocused() || _requestInFlight || _approvalPending || _submitOnEndEdit)
-            {
-                return;
-            }
-
-            Keyboard keyboard = Keyboard.current;
-            if (keyboard == null)
-            {
-                return;
-            }
-
-            bool enterPressed = keyboard.enterKey.wasPressedThisFrame || keyboard.numpadEnterKey.wasPressedThisFrame;
-            if (!enterPressed)
-            {
-                return;
-            }
-
-            bool shiftPressed = keyboard.leftShiftKey.isPressed || keyboard.rightShiftKey.isPressed;
-            if (shiftPressed)
-            {
-                return;
-            }
-
-            _submitOnEndEdit = true;
-            DeactivateCurrentInputField();
         }
 
         private void InsertTmpLineBreak()
@@ -205,18 +146,12 @@ namespace ProjectSENA.App
 
         public void SendCurrentInput()
         {
-            if (_requestInFlight || _approvalPending || !HasInputField())
+            if (_requestInFlight || _approvalPending || tmpInputField == null)
             {
                 return;
             }
 
-            if (UsingTmpInput)
-            {
-                SubmitText(NormalizeSubmittedText(tmpInputField.text));
-                return;
-            }
-
-            SubmitText(NormalizeSubmittedText(GetCurrentInputText()));
+            SubmitText(NormalizeSubmittedText(tmpInputField.text));
         }
 
         private void HandleInputFieldValueChanged(string _)
@@ -227,28 +162,6 @@ namespace ProjectSENA.App
             }
 
             StartCoroutine(RefreshInputFieldHeightAtEndOfFrame());
-        }
-
-        private void HandleInputFieldEndEdit(string submittedText)
-        {
-            if (UsingTmpInput)
-            {
-                return;
-            }
-
-            if (!_submitOnEndEdit)
-            {
-                return;
-            }
-
-            _submitOnEndEdit = false;
-
-            if (_requestInFlight || _approvalPending)
-            {
-                return;
-            }
-
-            SubmitText(NormalizeSubmittedText(submittedText));
         }
 
         private void HandleTmpInputSubmit(string submittedText)
@@ -280,7 +193,7 @@ namespace ProjectSENA.App
 
         private void SubmitText(string text)
         {
-            if (string.IsNullOrEmpty(text) || !HasInputField())
+            if (string.IsNullOrEmpty(text) || tmpInputField == null)
             {
                 return;
             }
@@ -389,27 +302,6 @@ namespace ProjectSENA.App
             StartCoroutine(PostEnvelope(request));
         }
 
-        private void ConfigureLegacyInputField()
-        {
-            inputField.lineType = InputField.LineType.MultiLineNewline;
-
-            if (inputField.textComponent != null)
-            {
-                inputField.textComponent.alignment = TextAnchor.UpperLeft;
-                inputField.textComponent.horizontalOverflow = HorizontalWrapMode.Wrap;
-                inputField.textComponent.verticalOverflow = VerticalWrapMode.Overflow;
-                ConfigureInnerTextRect(inputField.textComponent.rectTransform);
-            }
-
-            if (inputField.placeholder is Text placeholderText)
-            {
-                placeholderText.alignment = TextAnchor.UpperLeft;
-                placeholderText.horizontalOverflow = HorizontalWrapMode.Wrap;
-                placeholderText.verticalOverflow = VerticalWrapMode.Overflow;
-                ConfigureInnerTextRect(placeholderText.rectTransform);
-            }
-        }
-
         private void ConfigureTmpInputField()
         {
             tmpInputField.lineType = TMP_InputField.LineType.MultiLineSubmit;
@@ -468,20 +360,6 @@ namespace ProjectSENA.App
             rectTransform.sizeDelta = Vector2.zero;
         }
 
-        private static void ConfigureInnerTextRect(RectTransform rectTransform)
-        {
-            if (rectTransform == null)
-            {
-                return;
-            }
-
-            rectTransform.anchorMin = new Vector2(0f, 0f);
-            rectTransform.anchorMax = new Vector2(1f, 1f);
-            rectTransform.pivot = new Vector2(0.5f, 1f);
-            rectTransform.anchoredPosition = new Vector2(0f, -10f);
-            rectTransform.sizeDelta = new Vector2(-20f, -20f);
-        }
-
         private void ApplyStaticUiText()
         {
             if (sendButtonText != null)
@@ -494,11 +372,6 @@ namespace ProjectSENA.App
                 sendButtonTmpText.text = "\uBCF4\uB0B4\uAE30";
             }
 
-            if (inputPlaceholderText != null)
-            {
-                inputPlaceholderText.text = "\uBA54\uC2DC\uC9C0\uB97C \uC785\uB825\uD574 \uC918";
-            }
-
             if (inputPlaceholderTmpText != null)
             {
                 inputPlaceholderTmpText.text = "\uBA54\uC2DC\uC9C0\uB97C \uC785\uB825\uD574 \uC918";
@@ -507,16 +380,13 @@ namespace ProjectSENA.App
 
         private void UpdateInputFieldHeight()
         {
-            if (_inputFieldRect == null || !HasInputField())
+            if (_inputFieldRect == null || tmpInputField == null)
             {
                 return;
             }
 
             Canvas.ForceUpdateCanvases();
-
-            float preferredHeight = UsingTmpInput
-                ? GetTmpPreferredHeight()
-                : GetLegacyPreferredHeight();
+            float preferredHeight = GetTmpPreferredHeight();
 
             float targetHeight = Mathf.Clamp(preferredHeight + inputFieldVerticalPadding, minInputFieldHeight, maxInputFieldHeight);
             float currentHeight = _inputFieldRect.sizeDelta.y;
@@ -538,33 +408,6 @@ namespace ProjectSENA.App
             }
 
             ForceCurrentInputFieldLabelUpdate();
-        }
-
-        private float GetLegacyPreferredHeight()
-        {
-            Text textComponent = inputField.textComponent;
-            if (textComponent == null)
-            {
-                return minInputFieldHeight - inputFieldVerticalPadding;
-            }
-
-            RectTransform textRect = textComponent.rectTransform;
-            float availableWidth = textRect.rect.width;
-            if (availableWidth <= 0f)
-            {
-                availableWidth = _inputFieldRect.rect.width - 20f;
-            }
-
-            string content = string.IsNullOrEmpty(inputField.text) ? " " : inputField.text;
-            if (content.EndsWith("\n"))
-            {
-                content += " ";
-            }
-
-            TextGenerationSettings settings = textComponent.GetGenerationSettings(new Vector2(availableWidth, 0f));
-            TextGenerator generator = new TextGenerator();
-            generator.Populate(content, settings);
-            return generator.GetPreferredHeight(content, settings) / textComponent.pixelsPerUnit;
         }
 
         private float GetTmpPreferredHeight()
@@ -617,111 +460,36 @@ namespace ProjectSENA.App
                 sendButton.interactable = canSend;
             }
 
-            if (inputField != null)
-            {
-                inputField.interactable = canSend;
-            }
-
             if (tmpInputField != null)
             {
                 tmpInputField.interactable = canSend;
             }
         }
 
-        private bool HasInputField()
-        {
-            return tmpInputField != null || inputField != null;
-        }
-
-        private bool IsInputFocused()
-        {
-            if (UsingTmpInput)
-            {
-                return tmpInputField.isFocused;
-            }
-
-            return inputField != null && inputField.isFocused;
-        }
-
-        private Transform GetInputTransform()
-        {
-            if (UsingTmpInput)
-            {
-                return tmpInputField.transform;
-            }
-
-            return inputField != null ? inputField.transform : null;
-        }
-
-        private string GetCurrentInputText()
-        {
-            if (UsingTmpInput)
-            {
-                return tmpInputField.text;
-            }
-
-            return inputField != null ? inputField.text : string.Empty;
-        }
-
         private void ActivateCurrentInputField()
         {
-            if (UsingTmpInput)
+            if (tmpInputField != null && tmpInputField.interactable)
             {
-                if (tmpInputField.interactable)
-                {
-                    tmpInputField.ActivateInputField();
-                    tmpInputField.MoveTextEnd(false);
-                }
-
-                return;
-            }
-
-            if (inputField != null && inputField.interactable)
-            {
-                inputField.ActivateInputField();
-                inputField.MoveTextEnd(false);
-            }
-        }
-
-        private void DeactivateCurrentInputField()
-        {
-            if (UsingTmpInput)
-            {
-                tmpInputField.DeactivateInputField();
-                return;
-            }
-
-            if (inputField != null)
-            {
-                inputField.DeactivateInputField();
+                tmpInputField.ActivateInputField();
+                tmpInputField.MoveTextEnd(false);
             }
         }
 
         private void ClearCurrentInputText()
         {
-            if (UsingTmpInput)
+            if (tmpInputField != null)
             {
                 tmpInputField.SetTextWithoutNotify(string.Empty);
                 tmpInputField.text = string.Empty;
                 tmpInputField.ForceLabelUpdate();
-                return;
             }
-
-            inputField.SetTextWithoutNotify(string.Empty);
-            inputField.ForceLabelUpdate();
         }
 
         private void ForceCurrentInputFieldLabelUpdate()
         {
-            if (UsingTmpInput)
+            if (tmpInputField != null)
             {
                 tmpInputField.ForceLabelUpdate();
-                return;
-            }
-
-            if (inputField != null)
-            {
-                inputField.ForceLabelUpdate();
             }
         }
 
