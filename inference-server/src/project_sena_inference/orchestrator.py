@@ -4,10 +4,16 @@ from __future__ import annotations
 
 from typing import cast
 
+from project_sena_inference.adapters.desktop_agent import (
+    DesktopAgentClientError,
+    HttpDesktopAgentClient,
+)
 from project_sena_inference.adapters.llm import StubLLMAdapter
 from project_sena_inference.adapters.tts import StubTTSAdapter
 from project_sena_inference.protocol import (
+    ApprovalRequestMessage,
     ApprovalResultMessage,
+    ErrorMessage,
     InboundMessage,
     OutboundMessage,
     ScreenFrameMessage,
@@ -60,10 +66,12 @@ class Orchestrator:
         session_store: SessionStore,
         llm_adapter: StubLLMAdapter,
         tts_adapter: StubTTSAdapter,
+        desktop_agent_client: HttpDesktopAgentClient | None = None,
     ) -> None:
         self._session_store = session_store
         self._llm_adapter = llm_adapter
         self._tts_adapter = tts_adapter
+        self._desktop_agent_client = desktop_agent_client
 
     def handle(self, message: InboundMessage) -> list[OutboundMessage]:
         session = self._session_store.get_or_create(message.session_id)
@@ -108,31 +116,35 @@ class Orchestrator:
         tool_request = self._maybe_plan_tool_request(session.session_id, user_text)
         if tool_request is not None:
             session.pending_tool_name = tool_request.payload.tool_name
-            if tool_request.payload.approval_policy == "auto_allowed":
-                assistant_text = AUTO_TOOL_MESSAGE
-                next_state = "tool_running"
-                next_detail = "Waiting for desktop tool execution."
-            else:
-                assistant_text = APPROVAL_TOOL_MESSAGE
-                next_state = "awaiting_approval"
-                next_detail = "Waiting for user approval."
+            if self._desktop_agent_client is None:
+                if tool_request.payload.approval_policy == "auto_allowed":
+                    assistant_text = AUTO_TOOL_MESSAGE
+                    next_state = "tool_running"
+                    next_detail = "Waiting for desktop tool execution."
+                else:
+                    assistant_text = APPROVAL_TOOL_MESSAGE
+                    next_state = "awaiting_approval"
+                    next_detail = "Waiting for user approval."
 
-            outbound.append(
-                make_assistant_text(
-                    session.session_id,
-                    assistant_text,
-                    persona_state="focused",
-                    should_speak=True,
+                outbound.append(
+                    make_assistant_text(
+                        session.session_id,
+                        assistant_text,
+                        persona_state="focused",
+                        should_speak=True,
+                    )
                 )
-            )
-            outbound.append(tool_request)
-            outbound.append(
-                make_assistant_state(
-                    session.session_id,
-                    next_state,
-                    next_detail,
+                outbound.append(tool_request)
+                outbound.append(
+                    make_assistant_state(
+                        session.session_id,
+                        next_state,
+                        next_detail,
+                    )
                 )
-            )
+                return outbound
+
+            outbound.extend(self._dispatch_tool_request(session, tool_request))
             return outbound
 
         llm_reply = self._llm_adapter.generate_reply(session, user_text)
@@ -231,6 +243,9 @@ class Orchestrator:
         session: SessionState,
         message: ApprovalResultMessage,
     ) -> list[OutboundMessage]:
+        if self._desktop_agent_client is not None:
+            return self._dispatch_approval_result(session, message)
+
         if message.payload.approved:
             pending_tool = session.pending_tool_name or "unknown_tool"
             return [
@@ -333,3 +348,104 @@ class Orchestrator:
             )
         return None
 
+    def _dispatch_tool_request(
+        self,
+        session: SessionState,
+        tool_request,
+    ) -> list[OutboundMessage]:
+        try:
+            response = self._desktop_agent_client.dispatch(tool_request)
+        except DesktopAgentClientError as exc:
+            return [
+                make_error(
+                    session.session_id,
+                    "desktop_agent_unreachable",
+                    str(exc),
+                    retryable=True,
+                ),
+                make_assistant_state(
+                    session.session_id,
+                    "error",
+                    "Desktop-agent dispatch failed.",
+                ),
+            ]
+
+        if isinstance(response, ApprovalRequestMessage):
+            return [
+                make_assistant_text(
+                    session.session_id,
+                    APPROVAL_TOOL_MESSAGE,
+                    persona_state="focused",
+                    should_speak=True,
+                ),
+                response,
+                make_assistant_state(
+                    session.session_id,
+                    "awaiting_approval",
+                    "Waiting for user approval.",
+                ),
+            ]
+
+        if isinstance(response, ToolResultMessage):
+            return [response, *self._handle_tool_result(session, response)]
+
+        return [
+            cast(OutboundMessage, response),
+            make_assistant_state(
+                session.session_id,
+                "error",
+                "Desktop-agent returned an error.",
+            ),
+        ]
+
+    def _dispatch_approval_result(
+        self,
+        session: SessionState,
+        approval_result: ApprovalResultMessage,
+    ) -> list[OutboundMessage]:
+        try:
+            response = self._desktop_agent_client.dispatch(approval_result)
+        except DesktopAgentClientError as exc:
+            return [
+                make_error(
+                    session.session_id,
+                    "desktop_agent_unreachable",
+                    str(exc),
+                    retryable=True,
+                ),
+                make_assistant_state(
+                    session.session_id,
+                    "error",
+                    "Desktop-agent dispatch failed.",
+                ),
+            ]
+
+        if isinstance(response, ToolResultMessage):
+            return [response, *self._handle_tool_result(session, response)]
+
+        if isinstance(response, ErrorMessage):
+            return [
+                cast(OutboundMessage, response),
+                make_assistant_state(
+                    session.session_id,
+                    "error",
+                    "Desktop-agent returned an error.",
+                ),
+            ]
+
+        return [
+            cast(
+                OutboundMessage,
+                make_error(
+                    session.session_id,
+                    "unexpected_desktop_agent_response",
+                    "Desktop-agent returned approval_request after approval_result.",
+                    retryable=False,
+                ),
+            ),
+            make_assistant_state(
+                session.session_id,
+                "error",
+                "Unexpected desktop-agent response type.",
+            ),
+        ]

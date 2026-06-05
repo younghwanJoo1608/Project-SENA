@@ -95,6 +95,19 @@ class ApprovalResultMessage(Envelope):
     payload: ApprovalResultPayload
 
 
+class ApprovalRequestPayload(BaseModel):
+    tool_name: ToolName
+    reason: str
+    risk_level: RiskLevel
+    prompt: str
+    arguments: dict
+
+
+class ApprovalRequestMessage(Envelope):
+    type: Literal["approval_request"]
+    payload: ApprovalRequestPayload
+
+
 class ToolResultPayload(BaseModel):
     tool_name: ToolName
     status: Literal["success", "denied", "error"]
@@ -172,7 +185,9 @@ class ErrorMessage(Envelope):
 OutboundMessage = Union[
     AssistantStateMessage,
     AssistantTextMessage,
+    ApprovalRequestMessage,
     ToolRequestMessage,
+    ToolResultMessage,
     ErrorMessage,
 ]
 
@@ -247,4 +262,3 @@ def make_error(
         timestamp=utc_now(),
         payload=ErrorPayload(code=code, message=message, retryable=retryable),
     )
-
