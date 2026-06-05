@@ -5,7 +5,53 @@ venv/
 *.pyc
 *.log
 *.tmp
+*.egg-info/
 .env
 .env.*
 !.env.example
 
+# OS / editor cruft
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Local IDE and Codex-only workspace state
+.codex/
+.codex-*/
+.cursor/
+.idea/
+.vscode/
+
+# Local-only notes and private planning
+*.local.md
+*.private.md
+*.internal.md
+AGENTS.local.md
+
+# Secrets and machine-local configuration
+*.secret
+*.secrets
+*.key
+*.pem
+*.p12
+*.local
+*.override.json
+*.override.yaml
+*.override.yml
+
+# Local runtime data and generated artifacts
+tmp/
+temp/
+logs/
+captures/
+recordings/
+artifacts/
+outputs/
+
+# User-supplied or downloaded assets/models
+models/
+checkpoints/
+voices/
+datasets/
+user-assets/
+local-assets/

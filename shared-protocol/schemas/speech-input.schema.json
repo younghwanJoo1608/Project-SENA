@@ -1,0 +1,49 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://project-sena.local/shared-protocol/schemas/speech-input.schema.json",
+  "title": "Project-SENA speech_input",
+  "allOf": [
+    {
+      "$ref": "./common.schema.json#/$defs/messageEnvelope"
+    },
+    {
+      "properties": {
+        "type": {
+          "const": "speech_input"
+        },
+        "payload": {
+          "type": "object",
+          "required": [
+            "text",
+            "language",
+            "stt_engine",
+            "confidence",
+            "is_final"
+          ],
+          "properties": {
+            "text": {
+              "type": "string"
+            },
+            "language": {
+              "type": "string",
+              "default": "ko"
+            },
+            "stt_engine": {
+              "type": "string"
+            },
+            "confidence": {
+              "type": "number",
+              "minimum": 0.0,
+              "maximum": 1.0
+            },
+            "is_final": {
+              "type": "boolean"
+            }
+          },
+          "additionalProperties": false
+        }
+      }
+    }
+  ]
+}
+

@@ -1,0 +1,65 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://project-sena.local/shared-protocol/schemas/screen-frame.schema.json",
+  "title": "Project-SENA screen_frame",
+  "allOf": [
+    {
+      "$ref": "./common.schema.json#/$defs/messageEnvelope"
+    },
+    {
+      "properties": {
+        "type": {
+          "const": "screen_frame"
+        },
+        "payload": {
+          "type": "object",
+          "required": [
+            "image_format",
+            "image_base64",
+            "capture_mode",
+            "display_index"
+          ],
+          "properties": {
+            "image_format": {
+              "type": "string",
+              "enum": [
+                "png",
+                "jpeg"
+              ]
+            },
+            "image_base64": {
+              "type": "string",
+              "minLength": 1
+            },
+            "capture_mode": {
+              "type": "string",
+              "enum": [
+                "full_screen",
+                "selected_region",
+                "active_window"
+              ]
+            },
+            "display_index": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "active_window": {
+              "type": "object",
+              "properties": {
+                "title": {
+                  "type": "string"
+                },
+                "process_name": {
+                  "type": "string"
+                }
+              },
+              "additionalProperties": false
+            }
+          },
+          "additionalProperties": false
+        }
+      }
+    }
+  ]
+}
+

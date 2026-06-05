@@ -1,0 +1,43 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://project-sena.local/shared-protocol/schemas/user-text.schema.json",
+  "title": "Project-SENA user_text",
+  "allOf": [
+    {
+      "$ref": "./common.schema.json#/$defs/messageEnvelope"
+    },
+    {
+      "properties": {
+        "type": {
+          "const": "user_text"
+        },
+        "payload": {
+          "type": "object",
+          "required": [
+            "text",
+            "language",
+            "input_mode"
+          ],
+          "properties": {
+            "text": {
+              "type": "string",
+              "minLength": 1
+            },
+            "language": {
+              "type": "string",
+              "default": "ko"
+            },
+            "input_mode": {
+              "type": "string",
+              "enum": [
+                "typed"
+              ]
+            }
+          },
+          "additionalProperties": false
+        }
+      }
+    }
+  ]
+}
+
