@@ -1,0 +1,99 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://project-sena.local/shared-protocol/schemas/common.schema.json",
+  "title": "Project-SENA Common Protocol Types",
+  "$defs": {
+    "protocolVersion": {
+      "type": "string",
+      "pattern": "^\\d+\\.\\d+$"
+    },
+    "source": {
+      "type": "string",
+      "enum": [
+        "unity-client",
+        "desktop-agent",
+        "inference-server",
+        "system"
+      ]
+    },
+    "riskLevel": {
+      "type": "string",
+      "enum": [
+        "low",
+        "medium",
+        "high",
+        "critical"
+      ]
+    },
+    "approvalPolicy": {
+      "type": "string",
+      "enum": [
+        "auto_allowed",
+        "user_confirmation",
+        "blocked"
+      ]
+    },
+    "toolName": {
+      "type": "string",
+      "enum": [
+        "capture_screen",
+        "get_active_window",
+        "open_app",
+        "type_text"
+      ]
+    },
+    "assistantState": {
+      "type": "string",
+      "enum": [
+        "idle",
+        "listening",
+        "thinking",
+        "speaking",
+        "awaiting_approval",
+        "tool_running",
+        "error",
+        "disconnected"
+      ]
+    },
+    "messageEnvelope": {
+      "type": "object",
+      "required": [
+        "protocol_version",
+        "type",
+        "message_id",
+        "session_id",
+        "timestamp",
+        "source",
+        "payload"
+      ],
+      "properties": {
+        "protocol_version": {
+          "$ref": "#/$defs/protocolVersion"
+        },
+        "type": {
+          "type": "string"
+        },
+        "message_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "session_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "timestamp": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "source": {
+          "$ref": "#/$defs/source"
+        },
+        "payload": {
+          "type": "object"
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+}
+

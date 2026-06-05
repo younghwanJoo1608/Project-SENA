@@ -1,0 +1,49 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://project-sena.local/shared-protocol/schemas/tts-audio.schema.json",
+  "title": "Project-SENA tts_audio",
+  "allOf": [
+    {
+      "$ref": "./common.schema.json#/$defs/messageEnvelope"
+    },
+    {
+      "properties": {
+        "type": {
+          "const": "tts_audio"
+        },
+        "payload": {
+          "type": "object",
+          "required": [
+            "audio_format",
+            "audio_base64",
+            "sample_rate_hz",
+            "text"
+          ],
+          "properties": {
+            "audio_format": {
+              "type": "string",
+              "enum": [
+                "wav",
+                "mp3",
+                "ogg"
+              ]
+            },
+            "audio_base64": {
+              "type": "string",
+              "minLength": 1
+            },
+            "sample_rate_hz": {
+              "type": "integer",
+              "minimum": 8000
+            },
+            "text": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": false
+        }
+      }
+    }
+  ]
+}
+

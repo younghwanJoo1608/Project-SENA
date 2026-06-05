@@ -1,0 +1,42 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://project-sena.local/shared-protocol/schemas/assistant-text.schema.json",
+  "title": "Project-SENA assistant_text",
+  "allOf": [
+    {
+      "$ref": "./common.schema.json#/$defs/messageEnvelope"
+    },
+    {
+      "properties": {
+        "type": {
+          "const": "assistant_text"
+        },
+        "payload": {
+          "type": "object",
+          "required": [
+            "text",
+            "display_text",
+            "persona_state",
+            "should_speak"
+          ],
+          "properties": {
+            "text": {
+              "type": "string"
+            },
+            "display_text": {
+              "type": "string"
+            },
+            "persona_state": {
+              "type": "string"
+            },
+            "should_speak": {
+              "type": "boolean"
+            }
+          },
+          "additionalProperties": false
+        }
+      }
+    }
+  ]
+}
+

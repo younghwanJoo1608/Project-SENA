@@ -1,0 +1,18 @@
+{
+  "protocol_version": "0.1",
+  "type": "tool_request",
+  "message_id": "msg-0001",
+  "session_id": "session-0001",
+  "timestamp": "2026-06-05T08:00:00Z",
+  "source": "inference-server",
+  "payload": {
+    "tool_name": "open_app",
+    "arguments": {
+      "app_name": "notepad"
+    },
+    "reason": "The user asked to open a plain text editor.",
+    "risk_level": "low",
+    "approval_policy": "user_confirmation"
+  }
+}
+

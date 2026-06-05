@@ -1,3 +1,15 @@
+Metadata-Version: 2.4
+Name: project-sena-inference
+Version: 0.1.0
+Summary: Initial inference server skeleton for Project-SENA
+Requires-Python: >=3.11
+Description-Content-Type: text/markdown
+Requires-Dist: fastapi<1.0,>=0.115
+Requires-Dist: pydantic<3.0,>=2.7
+Requires-Dist: uvicorn<1.0,>=0.30
+Provides-Extra: dev
+Requires-Dist: pytest<9.0,>=8.0; extra == "dev"
+
 # Inference Server
 
 `inference-server/` contains the first Project-SENA backend skeleton.

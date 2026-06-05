@@ -1,0 +1,46 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://project-sena.local/shared-protocol/schemas/tool-result.schema.json",
+  "title": "Project-SENA tool_result",
+  "allOf": [
+    {
+      "$ref": "./common.schema.json#/$defs/messageEnvelope"
+    },
+    {
+      "properties": {
+        "type": {
+          "const": "tool_result"
+        },
+        "payload": {
+          "type": "object",
+          "required": [
+            "tool_name",
+            "status",
+            "result"
+          ],
+          "properties": {
+            "tool_name": {
+              "$ref": "./common.schema.json#/$defs/toolName"
+            },
+            "status": {
+              "type": "string",
+              "enum": [
+                "success",
+                "denied",
+                "error"
+              ]
+            },
+            "result": {
+              "type": "object"
+            },
+            "error_message": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": false
+        }
+      }
+    }
+  ]
+}
+

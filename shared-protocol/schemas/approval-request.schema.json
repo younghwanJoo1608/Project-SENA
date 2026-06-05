@@ -1,0 +1,42 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://project-sena.local/shared-protocol/schemas/approval-request.schema.json",
+  "title": "Project-SENA approval_request",
+  "allOf": [
+    {
+      "$ref": "./common.schema.json#/$defs/messageEnvelope"
+    },
+    {
+      "properties": {
+        "type": {
+          "const": "approval_request"
+        },
+        "payload": {
+          "type": "object",
+          "required": [
+            "tool_name",
+            "reason",
+            "risk_level",
+            "arguments_preview"
+          ],
+          "properties": {
+            "tool_name": {
+              "$ref": "./common.schema.json#/$defs/toolName"
+            },
+            "reason": {
+              "type": "string"
+            },
+            "risk_level": {
+              "$ref": "./common.schema.json#/$defs/riskLevel"
+            },
+            "arguments_preview": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": false
+        }
+      }
+    }
+  ]
+}
+
