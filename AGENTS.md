@@ -31,6 +31,13 @@ Project-SENA should become a local-first assistant that can:
 - Keep code and docs ASCII unless a file specifically needs Korean user-facing text.
 - Do not vendor large models, generated audio, captures, build artifacts, Unity caches, or local credentials.
 - Keep ProjectLucia code in `references/` as reference material; copy only small, well-understood pieces when justified.
+- Treat terminal-rendered Korean text as untrusted when the shell shows mojibake or replacement glyphs. If user-facing Korean strings matter, validate them from the source file itself or in the target app before making more edits.
+- When the user narrows a layout requirement, preserve that constraint through later edits. Do not generalize a local panel layout into a full-screen layout unless the user explicitly asks for that change.
+- For Unity scene work, prefer small targeted changes over broad `.unity` YAML rewrites. Change only the specific objects and fields needed for the current request.
+- When a request mixes behavior fixes and layout polish, land the behavior fix first and verify it before changing layout or visual structure.
+- When a bug appears, prefer the global-standard and structurally correct fix before attempting fragile local workarounds. If a workaround is temporarily necessary, label it clearly as temporary and keep it easy to remove.
+- When an object, component, or path is no longer part of the intended design, remove it or explicitly ask the user before leaving it in place. Do not leave deprecated scene objects, duplicate inputs, or stale references alive if they can keep affecting runtime behavior.
+- Choose structures that preserve forward expansion. Do not optimize for the quickest local implementation if it is likely to force a later rewrite of the same feature boundary and create avoidable bugs during expansion.
 
 ## Safety Model
 
