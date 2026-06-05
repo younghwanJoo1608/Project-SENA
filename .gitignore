@@ -5,6 +5,7 @@ venv/
 *.pyc
 *.log
 *.tmp
+*.egg-info/
 .env
 .env.*
 !.env.example
