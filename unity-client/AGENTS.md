@@ -37,4 +37,8 @@ The Unity client is the user-facing body of Project-SENA.
 - For Unity UI and input bugs, prefer the platform-standard fix path first. If the issue points to a known component limitation, move to the standard replacement or supported workflow instead of layering brittle event-order or timing hacks.
 - When replacing a Unity object or component with a new one, remove or disable the superseded object in the same task. Do not leave legacy and replacement inputs, text objects, or controllers active together.
 - Before choosing a shortcut implementation for UI or input handling, check whether the feature is likely to expand later. Favor the structure that can absorb future behavior, localization, and asset changes without forcing a second rewrite.
+- For Unity UI, TMP input, IME behavior, focus handling, layout scaling, editor tooling, or rendering quirks, search beyond the local repo before committing to an approach. Use official Unity docs and issue tracker, then broaden to GitHub, Stack Overflow, Reddit, and other implementation-focused references.
+- Do not claim a Unity-side fix is standard unless it is supported by evidence from documentation, issue discussions, source inspection, or widely reused community patterns.
+- If the ecosystem already contains a common pattern, helper component, subclassing approach, or known workaround for the same TMP / UI problem, prefer adapting that over repeated trial-and-error inside the project controller code.
+- When web research changes the implementation strategy, note the category of source that informed the change so future contributors understand why the design exists.
 

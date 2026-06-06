@@ -4,6 +4,7 @@ using ProjectSENA.Protocol;
 using ProjectSENA.UI;
 using TMPro;
 using UnityEngine;
+using UnityEngine.EventSystems;
 using UnityEngine.InputSystem;
 using UnityEngine.UI;
 
@@ -26,20 +27,33 @@ namespace ProjectSENA.App
         [SerializeField] private Text assistantStateText;
         [SerializeField] private ChatPanelController chatPanel;
         [SerializeField] private ApprovalPanelController approvalPanel;
+        [SerializeField] private RectTransform approvalPanelRect;
 
         [Header("Input Composer")]
         [SerializeField] private float minInputFieldHeight = 56f;
         [SerializeField] private float maxInputFieldHeight = 160f;
         [SerializeField] private float inputFieldVerticalPadding = 20f;
 
+        [Header("Responsive Layout")]
+        [SerializeField] private float approvalPanelWidthRatio = 0.36f;
+        [SerializeField] private float approvalPanelMinWidth = 520f;
+        [SerializeField] private float approvalPanelMaxWidth = 760f;
+        [SerializeField] private float approvalPanelHeightRatio = 0.5f;
+        [SerializeField] private float approvalPanelMinHeight = 260f;
+        [SerializeField] private float approvalPanelMaxHeight = 340f;
+
         private SenaApiClient _apiClient;
         private RectTransform _inputFieldRect;
+        private RectTransform _rootCanvasRect;
         private string _sessionId;
         private bool _requestInFlight;
         private bool _approvalPending;
         private bool _reactivateInputNextFrame;
         private bool _inputHeightRefreshPending;
+        private bool _submitDeferredUntilCompositionEnds;
+        private bool _submitFromEnterPending;
         private float _composerExtraHeight;
+        private Vector2 _lastCanvasSize;
 
         private void Awake()
         {
@@ -72,7 +86,6 @@ namespace ProjectSENA.App
 
                 ConfigureTmpInputField();
                 tmpInputField.onValueChanged.AddListener(HandleInputFieldValueChanged);
-                tmpInputField.onSubmit.AddListener(HandleTmpInputSubmit);
             }
 
             if (composerPanelRect == null && tmpInputField != null)
@@ -80,11 +93,23 @@ namespace ProjectSENA.App
                 composerPanelRect = tmpInputField.transform.parent as RectTransform;
             }
 
+            if (approvalPanelRect == null && approvalPanel != null)
+            {
+                approvalPanelRect = approvalPanel.transform as RectTransform;
+            }
+
+            RectTransform rootCanvasRect = approvalPanelRect != null ? approvalPanelRect.parent as RectTransform : null;
+            if (rootCanvasRect != null)
+            {
+                _rootCanvasRect = rootCanvasRect;
+            }
+
             if (composerPanelRect != null && _inputFieldRect != null)
             {
                 _composerExtraHeight = composerPanelRect.sizeDelta.y - _inputFieldRect.sizeDelta.y;
             }
 
+            ApplyResponsiveLayout(force: true);
             ApplyStaticUiText();
             UpdateInputFieldHeight();
             UpdateConnectionStatus(true);
@@ -102,12 +127,15 @@ namespace ProjectSENA.App
             if (tmpInputField != null)
             {
                 tmpInputField.onValueChanged.RemoveListener(HandleInputFieldValueChanged);
-                tmpInputField.onSubmit.RemoveListener(HandleTmpInputSubmit);
             }
         }
 
         private void Update()
         {
+            ApplyResponsiveLayout();
+            HandleDeferredTmpSubmit();
+            HandleKeyboardSubmitForTmpInput();
+
             if (_reactivateInputNextFrame)
             {
                 ActivateCurrentInputField();
@@ -115,33 +143,82 @@ namespace ProjectSENA.App
             }
         }
 
-        private void InsertTmpLineBreak()
+        private void HandleDeferredTmpSubmit()
         {
-            if (tmpInputField == null)
+            if (!_submitDeferredUntilCompositionEnds || IsImeCompositionActive())
             {
                 return;
             }
 
-            string current = tmpInputField.text ?? string.Empty;
-            int start = Mathf.Clamp(tmpInputField.selectionStringAnchorPosition, 0, current.Length);
-            int end = Mathf.Clamp(tmpInputField.selectionStringFocusPosition, 0, current.Length);
+            StartCoroutine(SubmitTmpInputAtEndOfFrame());
+        }
 
-            if (start > end)
+        private void HandleKeyboardSubmitForTmpInput()
+        {
+            if (tmpInputField == null || !tmpInputField.isFocused || _requestInFlight || _approvalPending)
             {
-                (start, end) = (end, start);
+                return;
             }
 
-            string updated = current.Substring(0, start) + "\n" + current.Substring(end);
-            int caret = start + 1;
+            if (_submitFromEnterPending || _submitDeferredUntilCompositionEnds)
+            {
+                return;
+            }
 
-            tmpInputField.SetTextWithoutNotify(updated);
-            tmpInputField.selectionStringAnchorPosition = caret;
-            tmpInputField.selectionStringFocusPosition = caret;
-            tmpInputField.caretPosition = caret;
-            tmpInputField.selectionAnchorPosition = caret;
-            tmpInputField.selectionFocusPosition = caret;
-            tmpInputField.ForceLabelUpdate();
-            HandleInputFieldValueChanged(updated);
+            Keyboard keyboard = Keyboard.current;
+            if (keyboard == null)
+            {
+                return;
+            }
+
+            bool enterPressed = keyboard.enterKey.wasPressedThisFrame || keyboard.numpadEnterKey.wasPressedThisFrame;
+            if (!enterPressed)
+            {
+                return;
+            }
+
+            bool shiftPressed = keyboard.leftShiftKey.isPressed || keyboard.rightShiftKey.isPressed;
+            if (shiftPressed)
+            {
+                QueueInputFieldHeightRefresh();
+                return;
+            }
+
+            if (IsImeCompositionActive())
+            {
+                _submitDeferredUntilCompositionEnds = true;
+                return;
+            }
+
+            StartCoroutine(SubmitTmpInputAtEndOfFrame());
+        }
+
+        private void ApplyResponsiveLayout(bool force = false)
+        {
+            if (_rootCanvasRect == null)
+            {
+                return;
+            }
+
+            Vector2 canvasSize = _rootCanvasRect.rect.size;
+            if (canvasSize.x <= 0f || canvasSize.y <= 0f)
+            {
+                return;
+            }
+
+            if (!force && (canvasSize - _lastCanvasSize).sqrMagnitude < 0.01f)
+            {
+                return;
+            }
+
+            _lastCanvasSize = canvasSize;
+
+            if (approvalPanelRect != null)
+            {
+                float approvalWidth = Mathf.Clamp(canvasSize.x * approvalPanelWidthRatio, approvalPanelMinWidth, approvalPanelMaxWidth);
+                float approvalHeight = Mathf.Clamp(approvalWidth * approvalPanelHeightRatio, approvalPanelMinHeight, approvalPanelMaxHeight);
+                approvalPanelRect.sizeDelta = new Vector2(approvalWidth, approvalHeight);
+            }
         }
 
         public void SendCurrentInput()
@@ -151,11 +228,32 @@ namespace ProjectSENA.App
                 return;
             }
 
+            if (tmpInputField.isFocused)
+            {
+                if (IsImeCompositionActive())
+                {
+                    _submitDeferredUntilCompositionEnds = true;
+                }
+                else
+                {
+                    StartCoroutine(SubmitTmpInputAtEndOfFrame());
+                }
+
+                return;
+            }
+
             SubmitText(NormalizeSubmittedText(tmpInputField.text));
         }
 
         private void HandleInputFieldValueChanged(string _)
         {
+            QueueInputFieldHeightRefresh();
+        }
+
+        private void QueueInputFieldHeightRefresh()
+        {
+            UpdateInputFieldHeight();
+
             if (_inputHeightRefreshPending)
             {
                 return;
@@ -164,23 +262,33 @@ namespace ProjectSENA.App
             StartCoroutine(RefreshInputFieldHeightAtEndOfFrame());
         }
 
-        private void HandleTmpInputSubmit(string submittedText)
+        private IEnumerator SubmitTmpInputAtEndOfFrame()
         {
-            if (_requestInFlight || _approvalPending)
+            if (_submitFromEnterPending)
             {
-                return;
+                yield break;
             }
 
-            Keyboard keyboard = Keyboard.current;
-            bool shiftPressed = keyboard != null && (keyboard.leftShiftKey.isPressed || keyboard.rightShiftKey.isPressed);
-            if (shiftPressed)
+            _submitFromEnterPending = true;
+            _submitDeferredUntilCompositionEnds = false;
+            yield return new WaitForEndOfFrame();
+            _submitFromEnterPending = false;
+
+            if (tmpInputField == null)
             {
-                InsertTmpLineBreak();
+                yield break;
+            }
+
+            string normalized = NormalizeSubmittedText(tmpInputField.text);
+            if (string.IsNullOrEmpty(normalized))
+            {
+                ClearCurrentInputText();
+                UpdateInputFieldHeight();
                 _reactivateInputNextFrame = true;
-                return;
+                yield break;
             }
 
-            SubmitText(NormalizeSubmittedText(submittedText));
+            SubmitText(normalized);
         }
 
         private IEnumerator RefreshInputFieldHeightAtEndOfFrame()
@@ -304,7 +412,7 @@ namespace ProjectSENA.App
 
         private void ConfigureTmpInputField()
         {
-            tmpInputField.lineType = TMP_InputField.LineType.MultiLineSubmit;
+            tmpInputField.lineType = TMP_InputField.LineType.MultiLineNewline;
             tmpInputField.richText = false;
 
             ConfigureTmpViewport(tmpInputField.textViewport);
@@ -385,26 +493,23 @@ namespace ProjectSENA.App
                 return;
             }
 
-            Canvas.ForceUpdateCanvases();
             float preferredHeight = GetTmpPreferredHeight();
 
             float targetHeight = Mathf.Clamp(preferredHeight + inputFieldVerticalPadding, minInputFieldHeight, maxInputFieldHeight);
             float currentHeight = _inputFieldRect.sizeDelta.y;
 
-            if (Mathf.Approximately(currentHeight, targetHeight))
+            if (!Mathf.Approximately(currentHeight, targetHeight))
             {
-                return;
-            }
+                Vector2 inputSize = _inputFieldRect.sizeDelta;
+                inputSize.y = targetHeight;
+                _inputFieldRect.sizeDelta = inputSize;
 
-            Vector2 inputSize = _inputFieldRect.sizeDelta;
-            inputSize.y = targetHeight;
-            _inputFieldRect.sizeDelta = inputSize;
-
-            if (composerPanelRect != null)
-            {
-                Vector2 composerSize = composerPanelRect.sizeDelta;
-                composerSize.y = targetHeight + _composerExtraHeight;
-                composerPanelRect.sizeDelta = composerSize;
+                if (composerPanelRect != null)
+                {
+                    Vector2 composerSize = composerPanelRect.sizeDelta;
+                    composerSize.y = targetHeight + _composerExtraHeight;
+                    composerPanelRect.sizeDelta = composerSize;
+                }
             }
 
             ForceCurrentInputFieldLabelUpdate();
@@ -418,15 +523,23 @@ namespace ProjectSENA.App
                 return minInputFieldHeight - inputFieldVerticalPadding;
             }
 
-            string content = string.IsNullOrEmpty(tmpInputField.text) ? " " : tmpInputField.text;
-            if (content.EndsWith("\n"))
+            string content = GetInputMeasurementText(tmpInputField.text);
+            if (content.EndsWith("\n") || content.EndsWith("\v"))
             {
                 content += " ";
             }
 
-            textComponent.text = content;
-            textComponent.ForceMeshUpdate();
-            return textComponent.preferredHeight;
+            content = content.Replace('\v', '\n');
+
+            float width = textComponent.rectTransform.rect.width;
+            if (width <= 0f)
+            {
+                width = _inputFieldRect.rect.width;
+            }
+
+            Vector2 preferredSize = textComponent.GetPreferredValues(content, width, Mathf.Infinity);
+            float explicitLineHeight = GetExplicitLineCount(tmpInputField.text) * GetTmpLineHeight(textComponent);
+            return Mathf.Max(preferredSize.y, explicitLineHeight);
         }
 
         private void UpdateConnectionStatus(bool connected, string suffix = "")
@@ -500,7 +613,49 @@ namespace ProjectSENA.App
                 return string.Empty;
             }
 
-            return text.TrimEnd('\r', '\n').Trim();
+            return text.Replace('\v', '\n').TrimEnd('\r', '\n').Trim();
+        }
+
+        private static string GetInputMeasurementText(string text)
+        {
+            return string.IsNullOrEmpty(text) ? " " : text;
+        }
+
+        private static int GetExplicitLineCount(string text)
+        {
+            if (string.IsNullOrEmpty(text))
+            {
+                return 1;
+            }
+
+            int lineCount = 1;
+            foreach (char c in text)
+            {
+                if (c == '\n' || c == '\v')
+                {
+                    lineCount++;
+                }
+            }
+
+            return lineCount;
+        }
+
+        private static float GetTmpLineHeight(TMP_Text textComponent)
+        {
+            TMP_FontAsset fontAsset = textComponent.font;
+            if (fontAsset == null || fontAsset.faceInfo.pointSize <= 0f)
+            {
+                return textComponent.fontSize;
+            }
+
+            float scale = textComponent.fontSize / fontAsset.faceInfo.pointSize;
+            return Mathf.Max(textComponent.fontSize, fontAsset.faceInfo.lineHeight * scale);
+        }
+
+        private static bool IsImeCompositionActive()
+        {
+            BaseInput input = EventSystem.current?.currentInputModule?.input;
+            return input != null && !string.IsNullOrEmpty(input.compositionString);
         }
 
         private static string FormatToolResult(ToolResultPayload payload)

@@ -404,10 +404,10 @@ RectTransform:
   m_Father: {fileID: 1035037668}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
   m_AnchorMin: {x: 0, y: 1}
-  m_AnchorMax: {x: 0, y: 1}
-  m_AnchoredPosition: {x: 24, y: -64}
-  m_SizeDelta: {x: 470, y: 120}
-  m_Pivot: {x: 0, y: 1}
+  m_AnchorMax: {x: 1, y: 1}
+  m_AnchoredPosition: {x: 0, y: -64}
+  m_SizeDelta: {x: -48, y: 120}
+  m_Pivot: {x: 0.5, y: 1}
 --- !u!114 &280083453
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -554,7 +554,7 @@ MonoBehaviour:
   m_EditorHideFlags: 0
   m_Script: {fileID: 11500000, guid: a79441f348de89743a2939f4d699eac1, type: 3}
   m_Name: 
-  m_EditorClassIdentifier: 
+  m_EditorClassIdentifier:
   m_RenderShadows: 1
   m_RequiresDepthTextureOption: 2
   m_RequiresOpaqueTextureOption: 2
@@ -696,7 +696,7 @@ MonoBehaviour:
   m_EditorHideFlags: 0
   m_Script: {fileID: 11500000, guid: 474bcb49853aa07438625e644c072ee6, type: 3}
   m_Name: 
-  m_EditorClassIdentifier: 
+  m_EditorClassIdentifier:
   m_UsePipelineSettings: 1
   m_AdditionalLightsShadowResolutionTier: 2
   m_CustomShadowLayers: 0
@@ -841,9 +841,9 @@ MonoBehaviour:
   m_GameObject: {fileID: 574193618}
   m_Enabled: 1
   m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: 2da0c512f12947e489f739169773d7ca, type: 3}
+  m_Script: {fileID: 11500000, guid: 8ba7c156a5c6428689ea1cc4b9eb0214, type: 3}
   m_Name: 
-  m_EditorClassIdentifier: Unity.TextMeshPro::TMPro.TMP_InputField
+  m_EditorClassIdentifier:
   m_Navigation:
     m_Mode: 3
     m_WrapAround: 0
@@ -1076,7 +1076,7 @@ MonoBehaviour:
   m_EditorHideFlags: 0
   m_Script: {fileID: 11500000, guid: 172515602e62fb746b5d573b38a5fe58, type: 3}
   m_Name: 
-  m_EditorClassIdentifier: 
+  m_EditorClassIdentifier:
   m_IsGlobal: 1
   priority: 0
   blendDistance: 0
@@ -1138,9 +1138,16 @@ MonoBehaviour:
   assistantStateText: {fileID: 46645804}
   chatPanel: {fileID: 167830869}
   approvalPanel: {fileID: 1035037671}
+  approvalPanelRect: {fileID: 1035037668}
   minInputFieldHeight: 56
   maxInputFieldHeight: 160
   inputFieldVerticalPadding: 20
+  approvalPanelWidthRatio: 0.36
+  approvalPanelMinWidth: 520
+  approvalPanelMaxWidth: 760
+  approvalPanelHeightRatio: 0.5
+  approvalPanelMinHeight: 260
+  approvalPanelMaxHeight: 340
 --- !u!4 &921346219
 Transform:
   m_ObjectHideFlags: 0
@@ -2287,8 +2294,8 @@ RectTransform:
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
   m_AnchorMin: {x: 0, y: 0}
   m_AnchorMax: {x: 1, y: 1}
-  m_AnchoredPosition: {x: 0, y: -20}
-  m_SizeDelta: {x: -32, y: -220}
+  m_AnchoredPosition: {x: 0, y: 17.5}
+  m_SizeDelta: {x: -32, y: -215}
   m_Pivot: {x: 0.5, y: 0.5}
 --- !u!114 &2089234503
 MonoBehaviour:
@@ -2417,10 +2424,10 @@ RectTransform:
   m_Father: {fileID: 1035037668}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
   m_AnchorMin: {x: 0, y: 1}
-  m_AnchorMax: {x: 0, y: 1}
-  m_AnchoredPosition: {x: 24, y: -20}
-  m_SizeDelta: {x: 300, y: 32}
-  m_Pivot: {x: 0, y: 1}
+  m_AnchorMax: {x: 1, y: 1}
+  m_AnchoredPosition: {x: 0, y: -20}
+  m_SizeDelta: {x: -48, y: 32}
+  m_Pivot: {x: 0.5, y: 1}
 --- !u!114 &2128701165
 MonoBehaviour:
   m_ObjectHideFlags: 0

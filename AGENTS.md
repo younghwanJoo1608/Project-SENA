@@ -38,6 +38,10 @@ Project-SENA should become a local-first assistant that can:
 - When a bug appears, prefer the global-standard and structurally correct fix before attempting fragile local workarounds. If a workaround is temporarily necessary, label it clearly as temporary and keep it easy to remove.
 - When an object, component, or path is no longer part of the intended design, remove it or explicitly ask the user before leaving it in place. Do not leave deprecated scene objects, duplicate inputs, or stale references alive if they can keep affecting runtime behavior.
 - Choose structures that preserve forward expansion. Do not optimize for the quickest local implementation if it is likely to force a later rewrite of the same feature boundary and create avoidable bugs during expansion.
+- For engine-specific, platform-specific, or interaction-heavy problems such as Unity UI, TMP input, IME behavior, rendering quirks, editor workflows, or OS integration, actively search the web early instead of relying only on local reasoning. Check official docs, issue trackers, GitHub, Stack Overflow, Reddit, and other primary community references before deciding a fix is standard.
+- Treat "standard" as something that should be justified by evidence when the behavior depends on a framework or engine. If there is meaningful uncertainty, look for existing implementations or discussion before building a custom solution.
+- Prefer reusing or adapting proven existing patterns, code, or reference implementations when licenses and fit are acceptable. Do not default to trial-and-error from scratch when the same problem is commonly solved in the ecosystem.
+- When borrowing an external pattern or code idea, verify its compatibility with the current stack and explain briefly which source category informed the approach, especially if the user has been blocked by repeated regressions.
 
 ## Safety Model
 
