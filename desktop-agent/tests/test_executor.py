@@ -1,5 +1,6 @@
 from project_sena_desktop_agent.executor import (
     DesktopToolExecutor,
+    TEST_FAILURE_APP_NAME,
     ToolExecutionError,
 )
 
@@ -49,3 +50,31 @@ def test_open_app_raises_error_when_window_is_not_detected(monkeypatch) -> None:
 
     assert outcome.result["process_alive"] is True
     assert outcome.result["window_detected"] is False
+
+
+def test_open_app_failure_injection_is_disabled_by_default() -> None:
+    executor = DesktopToolExecutor(failure_injection_enabled=False)
+
+    try:
+        executor.execute("open_app", {"app_name": TEST_FAILURE_APP_NAME})
+    except ToolExecutionError as exc:
+        assert "Unsupported application" in str(exc)
+        assert exc.result == {}
+    else:
+        raise AssertionError("Expected test failure app to be rejected.")
+
+
+def test_open_app_failure_injection_returns_structured_error() -> None:
+    executor = DesktopToolExecutor(failure_injection_enabled=True)
+
+    try:
+        executor.execute("open_app", {"app_name": TEST_FAILURE_APP_NAME})
+    except ToolExecutionError as exc:
+        assert "Injected open_app failure" in str(exc)
+        assert exc.result == {
+            "launched": False,
+            "app_name": TEST_FAILURE_APP_NAME,
+            "failure_injected": True,
+        }
+    else:
+        raise AssertionError("Expected injected failure.")

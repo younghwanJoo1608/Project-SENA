@@ -15,6 +15,10 @@ from project_sena_inference.protocol import InboundMessage, OutboundBatch
 from project_sena_inference.session_store import SessionStore
 
 
+def _is_truthy_env(name: str) -> bool:
+    return os.getenv(name, "").strip().lower() in {"1", "true", "yes", "on"}
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     session_store = SessionStore()
@@ -29,6 +33,9 @@ async def lifespan(app: FastAPI):
         llm_adapter,
         tts_adapter,
         desktop_agent_client=desktop_agent_client,
+        failure_injection_enabled=_is_truthy_env(
+            "PROJECT_SENA_ENABLE_FAILURE_INJECTION"
+        ),
     )
     yield
 
