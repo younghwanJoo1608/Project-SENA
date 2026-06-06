@@ -94,6 +94,13 @@ Unity Editor 안에서의 성공과 standalone 실행 성공은 다르다.
 - 위 실패 상황 각각에서 앱이 멈추지 않는다
 - 사용자가 "무슨 일이 났는지"와 "다음에 뭘 하면 되는지"를 알 수 있다
 
+### 검증 기록
+
+- 2026-06-06: inference-server 미기동 시 Unity가 한국어 안내를 표시하고 입력 가능 상태로 복구됨을 확인.
+- 2026-06-06: desktop-agent 미기동 시 inference-server 연결은 유지하면서 desktop-agent 연결 실패만 분리 표시함을 확인.
+- 2026-06-06: 승인 거절 시 툴이 실행되지 않고 idle 상태로 복구됨을 확인.
+- 2026-06-06: 테스트 전용 failure injection으로 tool 실행 실패 UX를 검증함. 테스트 경로는 `PROJECT_SENA_ENABLE_FAILURE_INJECTION=1`일 때만 활성화된다.
+
 ## 3. 세션/상태 운영성
 
 지금은 세션이 살아 있고 단일 사용자 흐름이 유지되는 한 문제없지만, 실사용성 측면에서는 최소한의 세션 운영 규칙이 필요하다.
@@ -104,17 +111,31 @@ Unity Editor 안에서의 성공과 standalone 실행 성공은 다르다.
 - 세션 ID 재생성 시점 정리
 - 승인 대기 중 입력 가능 여부 정책 고정
 - 상태값(`idle`, `thinking`, `awaiting_approval`)의 UI 표현 정리
+- 같은 `message_id` 재전송 시 중복 tool dispatch가 발생하지 않도록 방어
+- 이미 pending approval이 있는 session에서 새 tool 요청이 겹치지 않도록 방어
+- 이미 처리된 approval 결과가 다시 들어왔을 때 stale 응답으로 정리
 
 ### 권장 방향
 
 - "새 대화" 버튼 하나 추가
 - 대화 리셋 시 채팅 로그와 세션 ID를 동시에 초기화
 - 승인 대기 중에는 입력창과 보내기 버튼을 비활성화 유지
+- 세션 ID 영구 저장은 pending approval 복구 정책과 함께 다룬다. 단순히 Unity `PlayerPrefs`에 저장하면 앱 재시작 후 이전 pending 상태와 충돌할 수 있으므로, 먼저 "새 대화"와 "대기 작업 폐기" UX를 정한다.
 
 ### 완료 기준
 
 - 사용자가 여러 턴을 주고받다가도 대화를 명시적으로 초기화할 수 있다
 - 상태 전이가 UI 상에서 일관되게 보인다
+- 네트워크 재시도나 중복 클릭으로 같은 tool이 두 번 실행되지 않는다
+
+### 진행 기록
+
+- 2026-06-06: inference-server에 session별 `message_id` 응답 캐시를 추가해 같은 inbound message 재전송 시 이전 응답을 반환하도록 함.
+- 2026-06-06: inference-server가 pending approval 중 새 user_text/tool planning을 막고 먼저 승인/거절을 요구하도록 함.
+- 2026-06-06: inference-server가 pending approval이 없는 approval_result를 stale approval로 처리하고 desktop-agent로 내려보내지 않도록 함.
+- 2026-06-06: desktop-agent도 `message_id` 응답 캐시와 session별 pending tool 중복 방어를 추가함.
+- 2026-06-06: Unity에 런타임 생성 방식의 "새 대화" 버튼을 추가함. 버튼은 새 session_id를 만들고 채팅 로그, 승인 패널, 입력창 상태를 초기화한다.
+- 남은 작업: pending approval이 있을 때 "새 대화"가 이전 session의 pending tool을 서버/desktop-agent에 어떻게 폐기 통보할지 정책을 정한다. 현재 1차 구현은 Unity 클라이언트의 새 세션 시작에 집중한다.
 
 ## 4. Desktop tool 확장 검증
 

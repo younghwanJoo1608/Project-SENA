@@ -188,3 +188,76 @@ def test_approval_result_dispatches_and_returns_tool_result_when_enabled():
     assert desktop_agent_client.dispatched_types == ["tool_request", "approval_result"]
     assert any(item.type == "tool_result" for item in result)
     assert any(item.type == "assistant_text" for item in result)
+
+
+def test_duplicate_user_text_returns_cached_response_without_second_dispatch():
+    desktop_agent_client = FakeDesktopAgentClient()
+    orchestrator = make_orchestrator(desktop_agent_client=desktop_agent_client)
+    message = UserTextMessage(
+        type="user_text",
+        message_id="msg-duplicate-user-text",
+        session_id="session-duplicate-user-text",
+        timestamp=datetime.now(UTC),
+        source="unity-client",
+        payload={"text": "메모장 열어줘", "language": "ko", "input_mode": "typed"},
+    )
+
+    first_result = orchestrator.handle(message)
+    second_result = orchestrator.handle(message)
+
+    assert desktop_agent_client.dispatched_types == ["tool_request"]
+    assert [item.message_id for item in first_result] == [
+        item.message_id for item in second_result
+    ]
+
+
+def test_user_text_is_blocked_while_approval_is_pending():
+    desktop_agent_client = FakeDesktopAgentClient()
+    orchestrator = make_orchestrator(desktop_agent_client=desktop_agent_client)
+    first_message = UserTextMessage(
+        type="user_text",
+        message_id="msg-pending-first",
+        session_id="session-pending",
+        timestamp=datetime.now(UTC),
+        source="unity-client",
+        payload={"text": "메모장 열어줘", "language": "ko", "input_mode": "typed"},
+    )
+    second_message = UserTextMessage(
+        type="user_text",
+        message_id="msg-pending-second",
+        session_id="session-pending",
+        timestamp=datetime.now(UTC),
+        source="unity-client",
+        payload={"text": "다시 메모장 열어줘", "language": "ko", "input_mode": "typed"},
+    )
+
+    first_result = orchestrator.handle(first_message)
+    second_result = orchestrator.handle(second_message)
+
+    assert any(item.type == "approval_request" for item in first_result)
+    assert desktop_agent_client.dispatched_types == ["tool_request"]
+    assert not any(item.type == "approval_request" for item in second_result)
+    assert second_result[-1].type == "assistant_state"
+    assert second_result[-1].payload.state == "awaiting_approval"
+
+
+def test_stale_approval_result_does_not_dispatch_to_desktop_agent():
+    desktop_agent_client = FakeDesktopAgentClient()
+    orchestrator = make_orchestrator(desktop_agent_client=desktop_agent_client)
+    approval_message = ApprovalResultMessage(
+        type="approval_result",
+        message_id="msg-stale-approval",
+        session_id="session-stale-approval",
+        timestamp=datetime.now(UTC),
+        source="unity-client",
+        payload={
+            "approved": True,
+            "decision_reason": "stale approval",
+        },
+    )
+
+    result = orchestrator.handle(approval_message)
+
+    assert desktop_agent_client.dispatched_types == []
+    assert result[0].type == "error"
+    assert result[0].payload.code == "stale_approval_result"

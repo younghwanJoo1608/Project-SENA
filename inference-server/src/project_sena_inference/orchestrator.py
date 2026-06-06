@@ -56,6 +56,14 @@ TOOL_SUCCESS_MESSAGE = (
 TOOL_DENIED_MESSAGE = (
     "{tool} \uc791\uc5c5\uc740 \uc2e4\ud589\ub418\uc9c0 \uc54a\uc558\uc5b4."
 )
+PENDING_APPROVAL_MESSAGE = (
+    "\uc544\uc9c1 \ud655\uc778\uc744 \uae30\ub2e4\ub9ac\ub294 \uc791\uc5c5\uc774 \uc788\uc5b4. "
+    "\uba3c\uc800 \uc2b9\uc778 \ucc3d\uc5d0\uc11c \ud5c8\uc6a9\ud558\uac70\ub098 \uac70\uc808\ud574\uc918."
+)
+PENDING_TOOL_MESSAGE = (
+    "\uc774\ubbf8 \uc2e4\ud589 \uc911\uc778 \uc791\uc5c5\uc774 \uc788\uc5b4. "
+    "\uacb0\uacfc\uac00 \ub3cc\uc544\uc628 \ub4a4\uc5d0 \ub2e4\uc74c \uc694\uccad\uc744 \ubc1b\uc744\uac8c."
+)
 TEST_FAILURE_APP_NAME = "__project_sena_missing_app__"
 
 
@@ -78,34 +86,44 @@ class Orchestrator:
 
     def handle(self, message: InboundMessage) -> list[OutboundMessage]:
         session = self._session_store.get_or_create(message.session_id)
+        cached_response = session.get_cached_response(message.message_id)
+        if cached_response is not None:
+            return cached_response
+
         session.turn_count += 1
 
         if isinstance(message, UserTextMessage):
-            return self._handle_user_text(session, message)
-        if isinstance(message, SpeechInputMessage):
-            return self._handle_speech_input(session, message)
-        if isinstance(message, ScreenFrameMessage):
-            return self._handle_screen_frame(session, message)
-        if isinstance(message, ApprovalResultMessage):
-            return self._handle_approval_result(session, message)
-        if isinstance(message, ToolResultMessage):
-            return self._handle_tool_result(session, message)
-        return [
-            cast(
-                OutboundMessage,
-                make_error(
-                    message.session_id,
-                    "unsupported_message",
-                    "Unsupported message type.",
-                ),
-            )
-        ]
+            response = self._handle_user_text(session, message)
+        elif isinstance(message, SpeechInputMessage):
+            response = self._handle_speech_input(session, message)
+        elif isinstance(message, ScreenFrameMessage):
+            response = self._handle_screen_frame(session, message)
+        elif isinstance(message, ApprovalResultMessage):
+            response = self._handle_approval_result(session, message)
+        elif isinstance(message, ToolResultMessage):
+            response = self._handle_tool_result(session, message)
+        else:
+            response = [
+                cast(
+                    OutboundMessage,
+                    make_error(
+                        message.session_id,
+                        "unsupported_message",
+                        "Unsupported message type.",
+                    ),
+                )
+            ]
+        session.remember_response(message.message_id, response)
+        return response
 
     def _handle_user_text(
         self,
         session: SessionState,
         message: UserTextMessage,
     ) -> list[OutboundMessage]:
+        if session.pending_tool_name is not None:
+            return self._handle_user_text_during_pending_tool(session)
+
         user_text = message.payload.text.strip()
         session.recent_user_texts.append(user_text)
         outbound: list[OutboundMessage] = [
@@ -118,7 +136,6 @@ class Orchestrator:
 
         tool_request = self._maybe_plan_tool_request(session.session_id, user_text)
         if tool_request is not None:
-            session.pending_tool_name = tool_request.payload.tool_name
             if self._desktop_agent_client is None:
                 if tool_request.payload.approval_policy == "auto_allowed":
                     assistant_text = AUTO_TOOL_MESSAGE
@@ -129,6 +146,11 @@ class Orchestrator:
                     next_state = "awaiting_approval"
                     next_detail = "Waiting for user approval."
 
+                session.start_pending_tool(
+                    tool_request.payload.tool_name,
+                    tool_request.message_id,
+                    next_state,
+                )
                 outbound.append(
                     make_assistant_text(
                         session.session_id,
@@ -246,6 +268,21 @@ class Orchestrator:
         session: SessionState,
         message: ApprovalResultMessage,
     ) -> list[OutboundMessage]:
+        if session.pending_tool_name is None:
+            return [
+                make_error(
+                    session.session_id,
+                    "stale_approval_result",
+                    "No pending approval exists for this session.",
+                    retryable=False,
+                ),
+                make_assistant_state(
+                    session.session_id,
+                    "idle",
+                    "No pending approval exists.",
+                ),
+            ]
+
         if self._desktop_agent_client is not None:
             return self._dispatch_approval_result(session, message)
 
@@ -265,7 +302,7 @@ class Orchestrator:
                 ),
             ]
 
-        session.pending_tool_name = None
+        session.clear_pending_tool()
         return [
             make_assistant_text(
                 session.session_id,
@@ -285,7 +322,7 @@ class Orchestrator:
         session: SessionState,
         message: ToolResultMessage,
     ) -> list[OutboundMessage]:
-        session.pending_tool_name = None
+        session.clear_pending_tool()
         if message.payload.status == "success":
             return [
                 make_assistant_text(
@@ -367,9 +404,15 @@ class Orchestrator:
         session: SessionState,
         tool_request,
     ) -> list[OutboundMessage]:
+        session.start_pending_tool(
+            tool_request.payload.tool_name,
+            tool_request.message_id,
+            "dispatching",
+        )
         try:
             response = self._desktop_agent_client.dispatch(tool_request)
         except DesktopAgentClientError as exc:
+            session.clear_pending_tool()
             return [
                 make_error(
                     session.session_id,
@@ -385,6 +428,7 @@ class Orchestrator:
             ]
 
         if isinstance(response, ApprovalRequestMessage):
+            session.pending_tool_state = "awaiting_approval"
             return [
                 make_assistant_text(
                     session.session_id,
@@ -403,6 +447,7 @@ class Orchestrator:
         if isinstance(response, ToolResultMessage):
             return [response, *self._handle_tool_result(session, response)]
 
+        session.clear_pending_tool()
         return [
             cast(OutboundMessage, response),
             make_assistant_state(
@@ -420,6 +465,7 @@ class Orchestrator:
         try:
             response = self._desktop_agent_client.dispatch(approval_result)
         except DesktopAgentClientError as exc:
+            session.clear_pending_tool()
             return [
                 make_error(
                     session.session_id,
@@ -438,6 +484,7 @@ class Orchestrator:
             return [response, *self._handle_tool_result(session, response)]
 
         if isinstance(response, ErrorMessage):
+            session.clear_pending_tool()
             return [
                 cast(OutboundMessage, response),
                 make_assistant_state(
@@ -461,6 +508,39 @@ class Orchestrator:
                 session.session_id,
                 "error",
                 "Unexpected desktop-agent response type.",
+            ),
+        ]
+
+    def _handle_user_text_during_pending_tool(
+        self,
+        session: SessionState,
+    ) -> list[OutboundMessage]:
+        if session.pending_tool_state == "awaiting_approval":
+            return [
+                make_assistant_text(
+                    session.session_id,
+                    PENDING_APPROVAL_MESSAGE,
+                    persona_state="focused",
+                    should_speak=True,
+                ),
+                make_assistant_state(
+                    session.session_id,
+                    "awaiting_approval",
+                    "Waiting for user approval.",
+                ),
+            ]
+
+        return [
+            make_assistant_text(
+                session.session_id,
+                PENDING_TOOL_MESSAGE,
+                persona_state="focused",
+                should_speak=True,
+            ),
+            make_assistant_state(
+                session.session_id,
+                "tool_running",
+                "Waiting for desktop tool execution.",
             ),
         ]
 

@@ -24,10 +24,11 @@ def build_tool_request(
     tool_name: str,
     approval_policy: str,
     arguments: dict | None = None,
+    message_id: str = "msg-1",
 ) -> ToolRequestMessage:
     return ToolRequestMessage(
         type="tool_request",
-        message_id="msg-1",
+        message_id=message_id,
         session_id="session-1",
         timestamp=datetime.now(UTC),
         payload=ToolRequestPayload(
@@ -106,4 +107,57 @@ def test_denied_approval_returns_denied_tool_result() -> None:
 
     assert response.type == "tool_result"
     assert response.payload.status == "denied"
+    assert executor.calls == []
+
+
+def test_duplicate_approval_result_returns_cached_tool_result() -> None:
+    executor = FakeExecutor()
+    store = PendingToolStore()
+    service = DesktopAgentService(
+        policy_engine=PolicyEngine(),
+        executor=executor,
+        pending_store=store,
+    )
+    service.handle(
+        build_tool_request("open_app", "user_confirmation", {"app_name": "notepad"})
+    )
+    approval_result = build_approval_result(True)
+
+    first_response = service.handle(approval_result)
+    second_response = service.handle(approval_result)
+
+    assert first_response.type == "tool_result"
+    assert second_response.type == "tool_result"
+    assert first_response.message_id == second_response.message_id
+    assert executor.calls == [("open_app", {"app_name": "notepad"})]
+
+
+def test_second_tool_request_is_rejected_while_approval_is_pending() -> None:
+    executor = FakeExecutor()
+    store = PendingToolStore()
+    service = DesktopAgentService(
+        policy_engine=PolicyEngine(),
+        executor=executor,
+        pending_store=store,
+    )
+    service.handle(
+        build_tool_request(
+            "open_app",
+            "user_confirmation",
+            {"app_name": "notepad"},
+            message_id="msg-tool-1",
+        )
+    )
+
+    response = service.handle(
+        build_tool_request(
+            "open_app",
+            "user_confirmation",
+            {"app_name": "notepad"},
+            message_id="msg-tool-2",
+        )
+    )
+
+    assert response.type == "error"
+    assert response.payload.code == "pending_tool_exists"
     assert executor.calls == []

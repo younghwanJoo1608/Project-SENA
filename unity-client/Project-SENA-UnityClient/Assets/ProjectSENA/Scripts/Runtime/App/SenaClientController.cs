@@ -19,7 +19,9 @@ namespace ProjectSENA.App
         [Header("Chat UI")]
         [SerializeField] private TMP_InputField tmpInputField;
         [SerializeField] private Button sendButton;
+        [SerializeField] private Button newSessionButton;
         [SerializeField] private Text sendButtonText;
+        [SerializeField] private Text newSessionButtonText;
         [SerializeField] private TMP_Text sendButtonTmpText;
         [SerializeField] private TMP_Text inputPlaceholderTmpText;
         [SerializeField] private RectTransform composerPanelRect;
@@ -57,7 +59,7 @@ namespace ProjectSENA.App
 
         private void Awake()
         {
-            _sessionId = $"unity-session-{System.Guid.NewGuid():N}";
+            _sessionId = CreateSessionId();
             _apiClient = new SenaApiClient(inferenceServerBaseUrl);
 
             if (sendButton != null)
@@ -65,9 +67,19 @@ namespace ProjectSENA.App
                 sendButton.onClick.AddListener(SendCurrentInput);
             }
 
+            if (newSessionButton != null)
+            {
+                newSessionButton.onClick.AddListener(StartNewSession);
+            }
+
             if (sendButtonText == null && sendButton != null)
             {
                 sendButtonText = sendButton.GetComponentInChildren<Text>();
+            }
+
+            if (newSessionButtonText == null && newSessionButton != null)
+            {
+                newSessionButtonText = newSessionButton.GetComponentInChildren<Text>();
             }
 
             if (sendButtonTmpText == null && sendButton != null)
@@ -122,6 +134,11 @@ namespace ProjectSENA.App
             if (sendButton != null)
             {
                 sendButton.onClick.RemoveListener(SendCurrentInput);
+            }
+
+            if (newSessionButton != null)
+            {
+                newSessionButton.onClick.RemoveListener(StartNewSession);
             }
 
             if (tmpInputField != null)
@@ -243,6 +260,36 @@ namespace ProjectSENA.App
             }
 
             SubmitText(NormalizeSubmittedText(tmpInputField.text));
+        }
+
+        public void StartNewSession()
+        {
+            if (_requestInFlight)
+            {
+                chatPanel?.AppendSystemMessage("\uC694\uCCAD\uC744 \uCC98\uB9AC\uD558\uB294 \uC911\uC774\uC57C. \uC751\uB2F5\uC774 \uB3CC\uC544\uC628 \uB4A4 \uC0C8 \uB300\uD654\uB97C \uC2DC\uC791\uD560 \uC218 \uC788\uC5B4.");
+                return;
+            }
+
+            bool closedPendingApproval = _approvalPending;
+            _sessionId = CreateSessionId();
+            _approvalPending = false;
+            _submitDeferredUntilCompositionEnds = false;
+            _submitFromEnterPending = false;
+            _inputHeightRefreshPending = false;
+
+            approvalPanel?.Hide();
+            chatPanel?.Clear();
+            chatPanel?.AppendSystemMessage(
+                closedPendingApproval
+                    ? "\uC2B9\uC778 \uCC3D\uC744 \uB2EB\uACE0 \uC0C8 \uB300\uD654\uB97C \uC2DC\uC791\uD588\uC5B4."
+                    : "\uC0C8 \uB300\uD654\uB97C \uC2DC\uC791\uD588\uC5B4.");
+
+            ClearCurrentInputText();
+            UpdateInputFieldHeight();
+            UpdateConnectionStatus(true);
+            UpdateAssistantState("idle", "Waiting for input.");
+            UpdateSendInteractivity();
+            _reactivateInputNextFrame = true;
         }
 
         private void HandleInputFieldValueChanged(string _)
@@ -503,6 +550,16 @@ namespace ProjectSENA.App
                     : "\uB370\uC2A4\uD06C\uD1B1 \uC791\uC5C5 \uC2E4\uD589 \uC911 \uC624\uB958\uAC00 \uBC1C\uC0DD\uD588\uC5B4.";
             }
 
+            if (payload.code == "pending_tool_exists")
+            {
+                return "\uC774\uBBF8 \uD655\uC778\uC744 \uAE30\uB2E4\uB9AC\uB294 \uC791\uC5C5\uC774 \uC788\uC5B4. \uBA3C\uC800 \uC2B9\uC778 \uCC3D\uC5D0\uC11C \uD5C8\uC6A9\uD558\uAC70\uB098 \uAC70\uC808\uD574\uC918.";
+            }
+
+            if (payload.code == "stale_approval_result")
+            {
+                return "\uC774\uBBF8 \uCC98\uB9AC\uB41C \uC2B9\uC778 \uC751\uB2F5\uC774\uC57C. \uD544\uC694\uD558\uBA74 \uC694\uCCAD\uC744 \uB2E4\uC2DC \uBCF4\uB0B4\uC918.";
+            }
+
             string message = string.IsNullOrEmpty(payload.message)
                 ? "\uC11C\uBC84\uC5D0\uC11C \uC624\uB958\uAC00 \uB3CC\uC544\uC654\uC5B4."
                 : payload.message;
@@ -585,6 +642,11 @@ namespace ProjectSENA.App
             if (inputPlaceholderTmpText != null)
             {
                 inputPlaceholderTmpText.text = "\uBA54\uC2DC\uC9C0\uB97C \uC785\uB825\uD574 \uC918";
+            }
+
+            if (newSessionButtonText != null)
+            {
+                newSessionButtonText.text = "\uC0C8 \uB300\uD654";
             }
         }
 
@@ -679,6 +741,11 @@ namespace ProjectSENA.App
             {
                 tmpInputField.interactable = canSend;
             }
+
+            if (newSessionButton != null)
+            {
+                newSessionButton.interactable = !_requestInFlight;
+            }
         }
 
         private void ActivateCurrentInputField()
@@ -760,6 +827,11 @@ namespace ProjectSENA.App
             return input != null && !string.IsNullOrEmpty(input.compositionString);
         }
 
+        private static string CreateSessionId()
+        {
+            return $"unity-session-{System.Guid.NewGuid():N}";
+        }
+
         private static string FormatToolResult(ToolResultPayload payload)
         {
             return payload.status switch
@@ -828,6 +900,7 @@ namespace ProjectSENA.App
                 "Server response timed out." => "\uC11C\uBC84 \uC751\uB2F5 \uC2DC\uAC04\uC774 \uCD08\uACFC\uB410\uC5B4.",
                 "Server returned an error." => "\uC11C\uBC84\uAC00 \uC624\uB958 \uC751\uB2F5\uC744 \uBCF4\uB0C8\uC5B4.",
                 "Server response could not be read." => "\uC11C\uBC84 \uC751\uB2F5\uC744 \uC77D\uC9C0 \uBABB\uD588\uC5B4.",
+                "No pending approval exists." => "\uCC98\uB9AC\uD560 \uC2B9\uC778 \uC694\uCCAD\uC774 \uC5C6\uC5B4.",
                 _ => detail
             };
         }
