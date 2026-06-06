@@ -7,6 +7,8 @@ namespace ProjectSENA.UI
 {
     public sealed class ApprovalPanelController : MonoBehaviour
     {
+        private const string TestFailureAppName = "__project_sena_missing_app__";
+
         [SerializeField] private GameObject root;
         [SerializeField] private Text summaryText;
         [SerializeField] private Text promptText;
@@ -140,6 +142,11 @@ namespace ProjectSENA.UI
                     return "메모장을 실행할까?";
                 }
 
+                if (string.Equals(appName, TestFailureAppName, StringComparison.OrdinalIgnoreCase))
+                {
+                    return "테스트용 앱 실행 실패를 확인할까?";
+                }
+
                 return $"{appName} 앱을 실행할까?";
             }
 
@@ -152,6 +159,7 @@ namespace ProjectSENA.UI
             {
                 "The user asked to open a plain text editor." => "텍스트 편집기를 열어 달라는 요청을 받았어.",
                 "The user asked for current active window context." => "현재 사용 중인 창 정보를 확인해 달라는 요청을 받았어.",
+                "Project-SENA failure injection test requested." => "실패 복구 UX를 확인하기 위한 테스트 요청이야.",
                 _ => reason
             };
         }

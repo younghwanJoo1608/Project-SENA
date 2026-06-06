@@ -54,12 +54,16 @@ class FakeDesktopAgentClient:
         )
 
 
-def make_orchestrator(desktop_agent_client=None) -> Orchestrator:
+def make_orchestrator(
+    desktop_agent_client=None,
+    failure_injection_enabled: bool = False,
+) -> Orchestrator:
     return Orchestrator(
         SessionStore(),
         StubLLMAdapter(),
         StubTTSAdapter(),
         desktop_agent_client=desktop_agent_client,
+        failure_injection_enabled=failure_injection_enabled,
     )
 
 
@@ -97,6 +101,42 @@ def test_notepad_request_produces_tool_request():
     assert any(item.type == "tool_request" for item in result)
     tool_request = next(item for item in result if item.type == "tool_request")
     assert tool_request.payload.tool_name == "open_app"
+
+
+def test_failure_injection_text_is_not_planned_when_disabled():
+    orchestrator = make_orchestrator(failure_injection_enabled=False)
+    message = UserTextMessage(
+        type="user_text",
+        message_id="msg-failure-disabled",
+        session_id="session-failure-disabled",
+        timestamp=datetime.now(UTC),
+        source="unity-client",
+        payload={"text": "failure test app", "language": "en", "input_mode": "typed"},
+    )
+
+    result = orchestrator.handle(message)
+
+    assert not any(item.type == "tool_request" for item in result)
+
+
+def test_failure_injection_text_plans_test_app_when_enabled():
+    orchestrator = make_orchestrator(failure_injection_enabled=True)
+    message = UserTextMessage(
+        type="user_text",
+        message_id="msg-failure-enabled",
+        session_id="session-failure-enabled",
+        timestamp=datetime.now(UTC),
+        source="unity-client",
+        payload={"text": "failure test app", "language": "en", "input_mode": "typed"},
+    )
+
+    result = orchestrator.handle(message)
+
+    tool_request = next(item for item in result if item.type == "tool_request")
+    assert tool_request.payload.tool_name == "open_app"
+    assert tool_request.payload.arguments == {
+        "app_name": "__project_sena_missing_app__"
+    }
 
 
 def test_notepad_request_dispatches_to_desktop_agent_when_enabled():

@@ -3,10 +3,14 @@
 from __future__ import annotations
 
 import ctypes
+import os
 import subprocess
 import time
 from dataclasses import dataclass
 from pathlib import Path
+
+TEST_FAILURE_APP_NAME = "__project_sena_missing_app__"
+TEST_FAILURE_ENV_VAR = "PROJECT_SENA_ENABLE_FAILURE_INJECTION"
 
 
 class ToolExecutionError(RuntimeError):
@@ -31,6 +35,13 @@ class WindowInfo:
 class DesktopToolExecutor:
     """Runs a narrow set of desktop-local tools."""
 
+    def __init__(self, failure_injection_enabled: bool | None = None) -> None:
+        self._failure_injection_enabled = (
+            _is_truthy_env(TEST_FAILURE_ENV_VAR)
+            if failure_injection_enabled is None
+            else failure_injection_enabled
+        )
+
     def execute(self, tool_name: str, arguments: dict) -> ToolExecutionOutcome:
         handlers = {
             "open_app": self._open_app,
@@ -45,6 +56,19 @@ class DesktopToolExecutor:
 
     def _open_app(self, arguments: dict) -> ToolExecutionOutcome:
         app_name = str(arguments.get("app_name", "")).strip().lower()
+        if app_name == TEST_FAILURE_APP_NAME:
+            if self._failure_injection_enabled:
+                raise ToolExecutionError(
+                    "Injected open_app failure for Project-SENA verification.",
+                    result={
+                        "launched": False,
+                        "app_name": app_name,
+                        "failure_injected": True,
+                    },
+                )
+
+            raise ToolExecutionError(f"Unsupported application: {app_name}")
+
         app_map = {
             "notepad": "notepad.exe",
             "notepad.exe": "notepad.exe",
@@ -188,3 +212,7 @@ class DesktopToolExecutor:
 
         user32.EnumWindows(enum_windows_proc(callback), 0)
         return matches[0] if matches else None
+
+
+def _is_truthy_env(name: str) -> bool:
+    return os.getenv(name, "").strip().lower() in {"1", "true", "yes", "on"}

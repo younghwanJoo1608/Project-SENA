@@ -10,10 +10,12 @@ namespace ProjectSENA.Networking
     public sealed class SenaApiClient
     {
         private readonly string _baseUrl;
+        private readonly int _timeoutSeconds;
 
-        public SenaApiClient(string baseUrl)
+        public SenaApiClient(string baseUrl, int timeoutSeconds = 8)
         {
             _baseUrl = baseUrl.TrimEnd('/');
+            _timeoutSeconds = timeoutSeconds;
         }
 
         public IEnumerator PostMessage(
@@ -28,13 +30,14 @@ namespace ProjectSENA.Networking
             using UnityWebRequest request = new UnityWebRequest(url, UnityWebRequest.kHttpVerbPOST);
             request.uploadHandler = new UploadHandlerRaw(body);
             request.downloadHandler = new DownloadHandlerBuffer();
+            request.timeout = _timeoutSeconds;
             request.SetRequestHeader("Content-Type", "application/json; charset=utf-8");
 
             yield return request.SendWebRequest();
 
             if (request.result != UnityWebRequest.Result.Success)
             {
-                onError?.Invoke(request.error);
+                onError?.Invoke(BuildErrorMessage(request));
                 yield break;
             }
 
@@ -47,6 +50,26 @@ namespace ProjectSENA.Networking
             {
                 onError?.Invoke($"Failed to parse server response: {ex.Message}");
             }
+        }
+
+        private static string BuildErrorMessage(UnityWebRequest request)
+        {
+            if (request.result == UnityWebRequest.Result.ConnectionError)
+            {
+                return $"Connection failed: {request.error}";
+            }
+
+            if (request.result == UnityWebRequest.Result.ProtocolError)
+            {
+                return $"HTTP {(long)request.responseCode}: {request.downloadHandler?.text}";
+            }
+
+            if (request.result == UnityWebRequest.Result.DataProcessingError)
+            {
+                return $"Response processing failed: {request.error}";
+            }
+
+            return request.error;
         }
     }
 }

@@ -56,6 +56,7 @@ TOOL_SUCCESS_MESSAGE = (
 TOOL_DENIED_MESSAGE = (
     "{tool} \uc791\uc5c5\uc740 \uc2e4\ud589\ub418\uc9c0 \uc54a\uc558\uc5b4."
 )
+TEST_FAILURE_APP_NAME = "__project_sena_missing_app__"
 
 
 class Orchestrator:
@@ -67,11 +68,13 @@ class Orchestrator:
         llm_adapter: StubLLMAdapter,
         tts_adapter: StubTTSAdapter,
         desktop_agent_client: HttpDesktopAgentClient | None = None,
+        failure_injection_enabled: bool = False,
     ) -> None:
         self._session_store = session_store
         self._llm_adapter = llm_adapter
         self._tts_adapter = tts_adapter
         self._desktop_agent_client = desktop_agent_client
+        self._failure_injection_enabled = failure_injection_enabled
 
     def handle(self, message: InboundMessage) -> list[OutboundMessage]:
         session = self._session_store.get_or_create(message.session_id)
@@ -251,7 +254,7 @@ class Orchestrator:
             return [
                 make_assistant_text(
                     session.session_id,
-                    APPROVED_MESSAGE.format(tool=pending_tool),
+                    APPROVED_MESSAGE.format(tool=_tool_display_name(pending_tool)),
                     persona_state="focused",
                     should_speak=True,
                 ),
@@ -287,7 +290,9 @@ class Orchestrator:
             return [
                 make_assistant_text(
                     session.session_id,
-                    TOOL_SUCCESS_MESSAGE.format(tool=message.payload.tool_name),
+                    TOOL_SUCCESS_MESSAGE.format(
+                        tool=_tool_display_name(message.payload.tool_name)
+                    ),
                     persona_state="satisfied",
                     should_speak=True,
                 ),
@@ -301,7 +306,9 @@ class Orchestrator:
             return [
                 make_assistant_text(
                     session.session_id,
-                    TOOL_DENIED_MESSAGE.format(tool=message.payload.tool_name),
+                    TOOL_DENIED_MESSAGE.format(
+                        tool=_tool_display_name(message.payload.tool_name)
+                    ),
                     persona_state="calm",
                     should_speak=True,
                 ),
@@ -311,14 +318,7 @@ class Orchestrator:
                     "Tool execution denied.",
                 ),
             ]
-        error_text = message.payload.error_message or "Unknown tool execution error."
         return [
-            make_error(
-                session.session_id,
-                "tool_execution_error",
-                error_text,
-                retryable=True,
-            ),
             make_assistant_state(
                 session.session_id,
                 "error",
@@ -328,6 +328,20 @@ class Orchestrator:
 
     def _maybe_plan_tool_request(self, session_id: str, user_text: str):
         lowered = user_text.lower()
+        if self._failure_injection_enabled and (
+            "failure test" in lowered
+            or TEST_FAILURE_APP_NAME in lowered
+            or "\uc2e4\ud328 \ud14c\uc2a4\ud2b8" in user_text
+        ):
+            return make_tool_request(
+                session_id=session_id,
+                tool_name="open_app",
+                arguments={"app_name": TEST_FAILURE_APP_NAME},
+                reason="Project-SENA failure injection test requested.",
+                risk_level="low",
+                approval_policy="user_confirmation",
+            )
+
         if "\uba54\ubaa8\uc7a5" in user_text or "notepad" in lowered:
             return make_tool_request(
                 session_id=session_id,
@@ -449,3 +463,12 @@ class Orchestrator:
                 "Unexpected desktop-agent response type.",
             ),
         ]
+
+
+def _tool_display_name(tool_name: str) -> str:
+    return {
+        "open_app": "\uc571 \uc2e4\ud589",
+        "get_active_window": "\ud604\uc7ac \ucc3d \ud655\uc778",
+        "capture_screen": "\ud654\uba74 \ucea1\ucc98",
+        "type_text": "\ud14d\uc2a4\ud2b8 \uc785\ub825",
+    }.get(tool_name, tool_name)

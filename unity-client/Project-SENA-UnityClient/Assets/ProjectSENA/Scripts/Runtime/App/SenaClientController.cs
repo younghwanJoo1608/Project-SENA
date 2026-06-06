@@ -336,6 +336,7 @@ namespace ProjectSENA.App
             UpdateConnectionStatus(true);
             if (batch == null || batch.messages == null)
             {
+                RecoverFromFailedExchange("서버 응답을 읽지 못했어. 잠시 후 다시 시도해 줘.", "Server returned an empty response.");
                 return;
             }
 
@@ -374,10 +375,12 @@ namespace ProjectSENA.App
                     case "error":
                     {
                         ErrorPayload payload = message.ToPayload<ErrorPayload>();
-                        chatPanel?.AppendSystemMessage($"\uC624\uB958: {payload.message}");
-                        UpdateAssistantState("error", payload.message);
+                        chatPanel?.AppendSystemMessage(FormatServerError(payload));
+                        UpdateAssistantState("error", string.IsNullOrEmpty(payload.message) ? "Server returned an error." : payload.message);
                         _approvalPending = false;
+                        approvalPanel?.Hide();
                         UpdateSendInteractivity();
+                        _reactivateInputNextFrame = true;
                         break;
                     }
                 }
@@ -386,12 +389,7 @@ namespace ProjectSENA.App
 
         private void HandleTransportError(string error)
         {
-            UpdateConnectionStatus(false);
-            chatPanel?.AppendSystemMessage($"\uD1B5\uC2E0 \uC624\uB958: {error}");
-            UpdateAssistantState("disconnected", error);
-            _approvalPending = false;
-            _requestInFlight = false;
-            UpdateSendInteractivity();
+            RecoverFromFailedExchange(FormatTransportError(error), error);
         }
 
         private void OnApprovalDecision(bool approved)
@@ -408,6 +406,110 @@ namespace ProjectSENA.App
                 approved,
                 decisionReason);
             StartCoroutine(PostEnvelope(request));
+        }
+
+        private void RecoverFromFailedExchange(string userMessage, string technicalDetail)
+        {
+            UpdateConnectionStatus(false, "\uC7AC\uC2DC\uB3C4\uAC00 \uD544\uC694\uD574.");
+            chatPanel?.AppendSystemMessage(userMessage);
+            UpdateAssistantState("disconnected", FormatFailureStateDetail(technicalDetail));
+            _approvalPending = false;
+            _requestInFlight = false;
+            approvalPanel?.Hide();
+            UpdateSendInteractivity();
+            _reactivateInputNextFrame = true;
+
+            if (!string.IsNullOrEmpty(technicalDetail))
+            {
+                Debug.LogWarning($"Project-SENA request failed: {technicalDetail}");
+            }
+        }
+
+        private static string FormatTransportError(string error)
+        {
+            string normalized = error ?? string.Empty;
+
+            if (ContainsIgnoreCase(normalized, "Connection failed") ||
+                ContainsIgnoreCase(normalized, "Cannot connect") ||
+                ContainsIgnoreCase(normalized, "connection refused") ||
+                ContainsIgnoreCase(normalized, "Failed to connect"))
+            {
+                return "\uCD94\uB860 \uC11C\uBC84\uC5D0 \uC5F0\uACB0\uD558\uC9C0 \uBABB\uD588\uC5B4. inference-server\uAC00 \uC2E4\uD589 \uC911\uC778\uC9C0 \uD655\uC778\uD55C \uB4A4 \uB2E4\uC2DC \uBCF4\uB0B4\uC918.";
+            }
+
+            if (ContainsIgnoreCase(normalized, "timed out") || ContainsIgnoreCase(normalized, "timeout"))
+            {
+                return "\uC11C\uBC84 \uC751\uB2F5\uC744 \uAE30\uB2E4\uB9AC\uB2E4\uAC00 \uC2DC\uAC04\uC774 \uCD08\uACFC\uB410\uC5B4. \uC11C\uBC84 \uC0C1\uD0DC\uB97C \uD655\uC778\uD558\uACE0 \uB2E4\uC2DC \uC2DC\uB3C4\uD574 \uC918.";
+            }
+
+            if (normalized.StartsWith("HTTP ", System.StringComparison.Ordinal))
+            {
+                return "\uC11C\uBC84\uAC00 \uC624\uB958 \uC751\uB2F5\uC744 \uBCF4\uB0C8\uC5B4. \uC11C\uBC84 \uB85C\uADF8\uB97C \uD655\uC778\uD55C \uB4A4 \uB2E4\uC2DC \uC2DC\uB3C4\uD574 \uC918.";
+            }
+
+            if (ContainsIgnoreCase(normalized, "parse") || ContainsIgnoreCase(normalized, "processing"))
+            {
+                return "\uC11C\uBC84 \uC751\uB2F5 \uD615\uC2DD\uC744 \uC77D\uC9C0 \uBABB\uD588\uC5B4. \uD504\uB85C\uD1A0\uCF5C\uC774 \uB9DE\uB294\uC9C0 \uD655\uC778\uD574\uC57C \uD574.";
+            }
+
+            return string.IsNullOrEmpty(normalized)
+                ? "\uC11C\uBC84\uC640 \uD1B5\uC2E0\uD558\uB294 \uC911 \uC54C \uC218 \uC5C6\uB294 \uC624\uB958\uAC00 \uBC1C\uC0DD\uD588\uC5B4. \uB2E4\uC2DC \uC2DC\uB3C4\uD574 \uC918."
+                : $"\uC11C\uBC84\uC640 \uD1B5\uC2E0\uD558\uB294 \uC911 \uC624\uB958\uAC00 \uBC1C\uC0DD\uD588\uC5B4. {normalized}";
+        }
+
+        private static string FormatFailureStateDetail(string technicalDetail)
+        {
+            string normalized = technicalDetail ?? string.Empty;
+
+            if (ContainsIgnoreCase(normalized, "timed out") || ContainsIgnoreCase(normalized, "timeout"))
+            {
+                return "Server response timed out.";
+            }
+
+            if (normalized.StartsWith("HTTP ", System.StringComparison.Ordinal))
+            {
+                return "Server returned an error.";
+            }
+
+            if (ContainsIgnoreCase(normalized, "parse") || ContainsIgnoreCase(normalized, "processing"))
+            {
+                return "Server response could not be read.";
+            }
+
+            return "Connection failed.";
+        }
+
+        private static bool ContainsIgnoreCase(string text, string value)
+        {
+            return text.IndexOf(value, System.StringComparison.OrdinalIgnoreCase) >= 0;
+        }
+
+        private static string FormatServerError(ErrorPayload payload)
+        {
+            if (payload == null)
+            {
+                return "\uC11C\uBC84\uC5D0\uC11C \uC624\uB958\uAC00 \uB3CC\uC544\uC654\uC5B4.";
+            }
+
+            if (payload.code == "desktop_agent_unreachable")
+            {
+                return "\uB370\uC2A4\uD06C\uD1B1 \uC5D0\uC774\uC804\uD2B8\uC5D0 \uC5F0\uACB0\uD558\uC9C0 \uBABB\uD588\uC5B4. desktop-agent\uAC00 \uC2E4\uD589 \uC911\uC778\uC9C0 \uD655\uC778\uD55C \uB4A4 \uB2E4\uC2DC \uBCF4\uB0B4\uC918.";
+            }
+
+            if (payload.code == "tool_execution_error")
+            {
+                return payload.retryable
+                    ? "\uB370\uC2A4\uD06C\uD1B1 \uC791\uC5C5 \uC2E4\uD589 \uC911 \uC624\uB958\uAC00 \uBC1C\uC0DD\uD588\uC5B4. \uC0C1\uD0DC\uB97C \uD655\uC778\uD55C \uB4A4 \uB2E4\uC2DC \uC2DC\uB3C4\uD560 \uC218 \uC788\uC5B4."
+                    : "\uB370\uC2A4\uD06C\uD1B1 \uC791\uC5C5 \uC2E4\uD589 \uC911 \uC624\uB958\uAC00 \uBC1C\uC0DD\uD588\uC5B4.";
+            }
+
+            string message = string.IsNullOrEmpty(payload.message)
+                ? "\uC11C\uBC84\uC5D0\uC11C \uC624\uB958\uAC00 \uB3CC\uC544\uC654\uC5B4."
+                : payload.message;
+
+            return payload.retryable
+                ? $"\uC624\uB958: {message} \uC7A0\uC2DC \uD6C4 \uB2E4\uC2DC \uC2DC\uB3C4\uD560 \uC218 \uC788\uC5B4."
+                : $"\uC624\uB958: {message}";
         }
 
         private void ConfigureTmpInputField()
@@ -551,7 +653,7 @@ namespace ProjectSENA.App
 
             connectionStatusText.text = connected
                 ? (string.IsNullOrEmpty(suffix) ? "\uC5F0\uACB0\uB428" : $"\uC5F0\uACB0\uB428 \u00B7 {suffix}")
-                : "\uC5F0\uACB0 \uB04A\uAE40";
+                : (string.IsNullOrEmpty(suffix) ? "\uC5F0\uACB0 \uB04A\uAE40" : $"\uC5F0\uACB0 \uB04A\uAE40 \u00B7 {suffix}");
         }
 
         private void UpdateAssistantState(string state, string detail)
@@ -664,20 +766,32 @@ namespace ProjectSENA.App
             {
                 "success" => payload.tool_name switch
                 {
-                    "open_app" => "\uC548\uB0B4: \uC571 \uC2E4\uD589\uC774 \uC644\uB8CC\uB410\uC5B4.",
-                    "get_active_window" => "\uC548\uB0B4: \uD604\uC7AC \uCC3D \uC815\uBCF4\uB97C \uD655\uC778\uD588\uC5B4.",
-                    "capture_screen" => "\uC548\uB0B4: \uD654\uBA74 \uCEA1\uCC98\uB97C \uB9C8\uCCE4\uC5B4.",
-                    "type_text" => "\uC548\uB0B4: \uD14D\uC2A4\uD2B8 \uC785\uB825\uC744 \uB9C8\uCCE4\uC5B4.",
-                    _ => $"\uC548\uB0B4: {payload.tool_name} \uC791\uC5C5\uC744 \uB9C8\uCCE4\uC5B4."
+                    "open_app" => "\uC571 \uC2E4\uD589\uC774 \uC644\uB8CC\uB410\uC5B4.",
+                    "get_active_window" => "\uD604\uC7AC \uCC3D \uC815\uBCF4\uB97C \uD655\uC778\uD588\uC5B4.",
+                    "capture_screen" => "\uD654\uBA74 \uCEA1\uCC98\uB97C \uB9C8\uCCE4\uC5B4.",
+                    "type_text" => "\uD14D\uC2A4\uD2B8 \uC785\uB825\uC744 \uB9C8\uCCE4\uC5B4.",
+                    _ => $"{GetToolDisplayName(payload.tool_name)} \uC791\uC5C5\uC744 \uB9C8\uCCE4\uC5B4."
                 },
                 "denied" => payload.tool_name switch
                 {
-                    "open_app" => "\uC548\uB0B4: \uC571 \uC2E4\uD589 \uC694\uCCAD\uC744 \uCDE8\uC18C\uD588\uC5B4.",
-                    _ => $"\uC548\uB0B4: {payload.tool_name} \uC791\uC5C5\uC744 \uCDE8\uC18C\uD588\uC5B4."
+                    "open_app" => "\uC571 \uC2E4\uD589 \uC694\uCCAD\uC744 \uCDE8\uC18C\uD588\uC5B4.",
+                    _ => $"{GetToolDisplayName(payload.tool_name)} \uC791\uC5C5\uC744 \uCDE8\uC18C\uD588\uC5B4."
                 },
                 _ => string.IsNullOrEmpty(payload.error_message)
-                    ? $"\uC548\uB0B4: {payload.tool_name} \uC791\uC5C5 \uC911 \uC624\uB958\uAC00 \uBC1C\uC0DD\uD588\uC5B4."
-                    : $"\uC548\uB0B4: {payload.tool_name} \uC791\uC5C5 \uC911 \uC624\uB958\uAC00 \uBC1C\uC0DD\uD588\uC5B4. {payload.error_message}"
+                    ? $"{GetToolDisplayName(payload.tool_name)} \uC791\uC5C5 \uC911 \uC624\uB958\uAC00 \uBC1C\uC0DD\uD588\uC5B4."
+                    : $"{GetToolDisplayName(payload.tool_name)} \uC791\uC5C5 \uC911 \uC624\uB958\uAC00 \uBC1C\uC0DD\uD588\uC5B4. \uC0C1\uD0DC\uB97C \uD655\uC778\uD55C \uB4A4 \uB2E4\uC2DC \uC2DC\uB3C4\uD574 \uC918."
+            };
+        }
+
+        private static string GetToolDisplayName(string toolName)
+        {
+            return toolName switch
+            {
+                "open_app" => "\uC571 \uC2E4\uD589",
+                "get_active_window" => "\uD604\uC7AC \uCC3D \uD655\uC778",
+                "capture_screen" => "\uD654\uBA74 \uCEA1\uCC98",
+                "type_text" => "\uD14D\uC2A4\uD2B8 \uC785\uB825",
+                _ => toolName
             };
         }
 
@@ -710,6 +824,10 @@ namespace ProjectSENA.App
                 "Tool execution failed." => "\uC791\uC5C5 \uC2E4\uD589\uC5D0 \uC2E4\uD328\uD588\uC5B4.",
                 "Desktop-agent returned an error." => "\uB370\uC2A4\uD06C\uD1B1 \uC5D0\uC774\uC804\uD2B8\uC5D0\uC11C \uC624\uB958\uAC00 \uB3CC\uC544\uC654\uC5B4.",
                 "Desktop-agent dispatch failed." => "\uB370\uC2A4\uD06C\uD1B1 \uC5D0\uC774\uC804\uD2B8\uC640 \uD1B5\uC2E0\uD558\uC9C0 \uBABB\uD588\uC5B4.",
+                "Connection failed." => "\uC11C\uBC84\uC5D0 \uC5F0\uACB0\uD560 \uC218 \uC5C6\uC5B4.",
+                "Server response timed out." => "\uC11C\uBC84 \uC751\uB2F5 \uC2DC\uAC04\uC774 \uCD08\uACFC\uB410\uC5B4.",
+                "Server returned an error." => "\uC11C\uBC84\uAC00 \uC624\uB958 \uC751\uB2F5\uC744 \uBCF4\uB0C8\uC5B4.",
+                "Server response could not be read." => "\uC11C\uBC84 \uC751\uB2F5\uC744 \uC77D\uC9C0 \uBABB\uD588\uC5B4.",
                 _ => detail
             };
         }
