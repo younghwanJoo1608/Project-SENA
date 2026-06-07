@@ -166,6 +166,10 @@ Phase 1.5에서는 최소 1~2개의 tool을 더 붙여서 구조가 일반화되
 
 - `open_app` 외 1개 이상 tool이 같은 승인/실행/결과 루프로 동작한다
 
+### 진행 기록
+
+- 2026-06-07: `get_active_window`를 observation-only `auto_allowed` tool로 검증함. desktop-agent는 foreground window title, handle, process id/name/path를 반환하고, inference-server와 Unity가 approval 없이 결과를 표시한다.
+
 ## 5. 다음 Phase를 위한 구조 정리
 
 Phase 2에서 Live2D, 음성, Vision을 붙일 생각이라면 지금 구조를 한 번 다듬어두는 것이 좋다.

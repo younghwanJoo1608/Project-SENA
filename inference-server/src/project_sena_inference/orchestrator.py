@@ -65,6 +65,7 @@ PENDING_TOOL_MESSAGE = (
     "\uacb0\uacfc\uac00 \ub3cc\uc544\uc628 \ub4a4\uc5d0 \ub2e4\uc74c \uc694\uccad\uc744 \ubc1b\uc744\uac8c."
 )
 TEST_FAILURE_APP_NAME = "__project_sena_missing_app__"
+SELF_DESCRIBING_SUCCESS_TOOLS = {"get_active_window"}
 
 
 class Orchestrator:
@@ -324,6 +325,15 @@ class Orchestrator:
     ) -> list[OutboundMessage]:
         session.clear_pending_tool()
         if message.payload.status == "success":
+            if message.payload.tool_name in SELF_DESCRIBING_SUCCESS_TOOLS:
+                return [
+                    make_assistant_state(
+                        session.session_id,
+                        "idle",
+                        "Observation completed.",
+                    )
+                ]
+
             return [
                 make_assistant_text(
                     session.session_id,

@@ -2,6 +2,7 @@ from project_sena_desktop_agent.executor import (
     DesktopToolExecutor,
     TEST_FAILURE_APP_NAME,
     ToolExecutionError,
+    WindowInfo,
 )
 
 
@@ -78,3 +79,42 @@ def test_open_app_failure_injection_returns_structured_error() -> None:
         }
     else:
         raise AssertionError("Expected injected failure.")
+
+
+def test_get_active_window_returns_window_and_process_metadata(monkeypatch) -> None:
+    executor = DesktopToolExecutor()
+
+    monkeypatch.setattr(
+        executor,
+        "_get_foreground_window_info",
+        lambda: WindowInfo(
+            handle=1001,
+            title="Project-SENA - Unity",
+            process_id=4321,
+            process_name="Unity.exe",
+            executable_path="C:\\Program Files\\Unity\\Unity.exe",
+        ),
+    )
+
+    outcome = executor.execute("get_active_window", {})
+
+    assert outcome.result == {
+        "window_title": "Project-SENA - Unity",
+        "window_handle": 1001,
+        "process_id": 4321,
+        "process_name": "Unity.exe",
+        "executable_path": "C:\\Program Files\\Unity\\Unity.exe",
+    }
+
+
+def test_get_active_window_raises_error_when_no_foreground_window(monkeypatch) -> None:
+    executor = DesktopToolExecutor()
+
+    monkeypatch.setattr(executor, "_get_foreground_window_info", lambda: None)
+
+    try:
+        executor.execute("get_active_window", {})
+    except ToolExecutionError as exc:
+        assert "No active foreground window" in str(exc)
+    else:
+        raise AssertionError("Expected missing foreground window to fail.")

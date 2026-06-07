@@ -438,7 +438,16 @@ namespace ProjectSENA.App
                     case "tool_result":
                     {
                         ToolResultPayload payload = message.ToPayload<ToolResultPayload>();
-                        chatPanel?.AppendSystemMessage(FormatToolResult(payload));
+                        string toolResultText = FormatToolResult(payload);
+                        if (ShouldDisplayToolResultAsAssistant(payload))
+                        {
+                            chatPanel?.AppendAssistantMessage(toolResultText);
+                        }
+                        else
+                        {
+                            chatPanel?.AppendSystemMessage(toolResultText);
+                        }
+
                         _approvalPending = false;
                         UpdateSendInteractivity();
                         break;
@@ -863,7 +872,7 @@ namespace ProjectSENA.App
                 "success" => payload.tool_name switch
                 {
                     "open_app" => "\uC571 \uC2E4\uD589\uC774 \uC644\uB8CC\uB410\uC5B4.",
-                    "get_active_window" => "\uD604\uC7AC \uCC3D \uC815\uBCF4\uB97C \uD655\uC778\uD588\uC5B4.",
+                    "get_active_window" => FormatActiveWindowToolResult(payload),
                     "capture_screen" => "\uD654\uBA74 \uCEA1\uCC98\uB97C \uB9C8\uCCE4\uC5B4.",
                     "type_text" => "\uD14D\uC2A4\uD2B8 \uC785\uB825\uC744 \uB9C8\uCCE4\uC5B4.",
                     _ => $"{GetToolDisplayName(payload.tool_name)} \uC791\uC5C5\uC744 \uB9C8\uCCE4\uC5B4."
@@ -877,6 +886,40 @@ namespace ProjectSENA.App
                     ? $"{GetToolDisplayName(payload.tool_name)} \uC791\uC5C5 \uC911 \uC624\uB958\uAC00 \uBC1C\uC0DD\uD588\uC5B4."
                     : $"{GetToolDisplayName(payload.tool_name)} \uC791\uC5C5 \uC911 \uC624\uB958\uAC00 \uBC1C\uC0DD\uD588\uC5B4. \uC0C1\uD0DC\uB97C \uD655\uC778\uD55C \uB4A4 \uB2E4\uC2DC \uC2DC\uB3C4\uD574 \uC918."
             };
+        }
+
+        private static bool ShouldDisplayToolResultAsAssistant(ToolResultPayload payload)
+        {
+            return payload.status == "success" && payload.tool_name == "get_active_window";
+        }
+
+        private static string FormatActiveWindowToolResult(ToolResultPayload payload)
+        {
+            string title = GetResultString(payload, "window_title");
+            string processName = GetResultString(payload, "process_name");
+
+            if (string.IsNullOrEmpty(title) && string.IsNullOrEmpty(processName))
+            {
+                return "\uD604\uC7AC \uD65C\uC131 \uCC3D \uC815\uBCF4\uB97C \uD655\uC778\uD588\uC5B4.";
+            }
+
+            string descriptor = string.IsNullOrEmpty(title) ? processName : title;
+            if (!string.IsNullOrEmpty(title) && !string.IsNullOrEmpty(processName))
+            {
+                descriptor = $"{title} ({processName})";
+            }
+
+            return $"\uD604\uC7AC \uCC3D\uC740 {descriptor}\uC774\uC57C.";
+        }
+
+        private static string GetResultString(ToolResultPayload payload, string key)
+        {
+            if (payload.result == null || !payload.result.TryGetValue(key, out object value) || value == null)
+            {
+                return string.Empty;
+            }
+
+            return value.ToString();
         }
 
         private static string GetToolDisplayName(string toolName)
@@ -916,6 +959,7 @@ namespace ProjectSENA.App
                 "Waiting for user approval." => "\uC2B9\uC778\uC744 \uAE30\uB2E4\uB9AC\uACE0 \uC788\uC5B4.",
                 "Waiting for desktop tool execution." => "\uB370\uC2A4\uD06C\uD1B1 \uC791\uC5C5 \uACB0\uACFC\uB97C \uAE30\uB2E4\uB9AC\uACE0 \uC788\uC5B4.",
                 "Tool execution completed." => "\uC791\uC5C5\uC774 \uC644\uB8CC\uB410\uC5B4.",
+                "Observation completed." => "\uD655\uC778\uD588\uC5B4.",
                 "Tool execution denied." => "\uC791\uC5C5\uC744 \uCDE8\uC18C\uD588\uC5B4.",
                 "Tool execution failed." => "\uC791\uC5C5 \uC2E4\uD589\uC5D0 \uC2E4\uD328\uD588\uC5B4.",
                 "Desktop-agent returned an error." => "\uB370\uC2A4\uD06C\uD1B1 \uC5D0\uC774\uC804\uD2B8\uC5D0\uC11C \uC624\uB958\uAC00 \uB3CC\uC544\uC654\uC5B4.",

@@ -19,6 +19,27 @@ class FakeDesktopAgentClient:
     def dispatch(self, message):
         self.dispatched_types.append(message.type)
         if message.type == "tool_request":
+            if message.payload.tool_name == "get_active_window":
+                return ToolResultMessage(
+                    type="tool_result",
+                    message_id="msg-da-active-window",
+                    session_id=message.session_id,
+                    timestamp=datetime.now(UTC),
+                    source="desktop-agent",
+                    payload={
+                        "tool_name": "get_active_window",
+                        "status": "success",
+                        "result": {
+                            "window_title": "Project-SENA - Unity",
+                            "window_handle": 1001,
+                            "process_id": 4321,
+                            "process_name": "Unity.exe",
+                            "executable_path": "C:\\Program Files\\Unity\\Unity.exe",
+                        },
+                        "error_message": None,
+                    },
+                )
+
             return ApprovalRequestMessage(
                 type="approval_request",
                 message_id="msg-da-1",
@@ -139,6 +160,31 @@ def test_failure_injection_text_plans_test_app_when_enabled():
     assert tool_request.payload.arguments == {
         "app_name": "__project_sena_missing_app__"
     }
+
+
+def test_active_window_request_dispatches_auto_allowed_tool():
+    desktop_agent_client = FakeDesktopAgentClient()
+    orchestrator = make_orchestrator(desktop_agent_client=desktop_agent_client)
+    message = UserTextMessage(
+        type="user_text",
+        message_id="msg-active-window",
+        session_id="session-active-window",
+        timestamp=datetime.now(UTC),
+        source="unity-client",
+        payload={"text": "현재 창 뭐야?", "language": "ko", "input_mode": "typed"},
+    )
+
+    result = orchestrator.handle(message)
+
+    assert desktop_agent_client.dispatched_types == ["tool_request"]
+    assert any(item.type == "tool_result" for item in result)
+    assert not any(item.type == "approval_request" for item in result)
+    assert not any(item.type == "assistant_text" for item in result)
+    tool_result = next(item for item in result if item.type == "tool_result")
+    assert tool_result.payload.tool_name == "get_active_window"
+    assert tool_result.payload.result["process_name"] == "Unity.exe"
+    assert result[-1].type == "assistant_state"
+    assert result[-1].payload.state == "idle"
 
 
 def test_notepad_request_dispatches_to_desktop_agent_when_enabled():

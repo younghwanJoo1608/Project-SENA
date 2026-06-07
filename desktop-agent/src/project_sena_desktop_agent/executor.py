@@ -8,6 +8,7 @@ import subprocess
 import time
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 TEST_FAILURE_APP_NAME = "__project_sena_missing_app__"
 TEST_FAILURE_ENV_VAR = "PROJECT_SENA_ENABLE_FAILURE_INJECTION"
@@ -30,6 +31,9 @@ class ToolExecutionOutcome:
 class WindowInfo:
     handle: int
     title: str
+    process_id: int | None = None
+    process_name: str | None = None
+    executable_path: str | None = None
 
 
 class DesktopToolExecutor:
@@ -106,20 +110,35 @@ class DesktopToolExecutor:
 
     def _get_active_window(self, arguments: dict) -> ToolExecutionOutcome:
         _ = arguments
-        user32 = ctypes.windll.user32
-        hwnd = user32.GetForegroundWindow()
-        if hwnd == 0:
+        window = self._get_foreground_window_info()
+        if window is None:
             raise ToolExecutionError("No active foreground window was detected.")
-
-        length = user32.GetWindowTextLengthW(hwnd)
-        buffer = ctypes.create_unicode_buffer(length + 1)
-        user32.GetWindowTextW(hwnd, buffer, length + 1)
 
         return ToolExecutionOutcome(
             result={
-                "window_title": buffer.value,
-                "window_handle": int(hwnd),
+                "window_title": window.title,
+                "window_handle": window.handle,
+                "process_id": window.process_id,
+                "process_name": window.process_name,
+                "executable_path": window.executable_path,
             }
+        )
+
+    def _get_foreground_window_info(self) -> WindowInfo | None:
+        user32 = ctypes.windll.user32
+        hwnd = user32.GetForegroundWindow()
+        if hwnd == 0:
+            return None
+
+        pid = self._get_window_process_id(hwnd)
+        executable_path = self._get_process_executable_path(pid) if pid else None
+
+        return WindowInfo(
+            handle=int(hwnd),
+            title=self._get_window_title(hwnd),
+            process_id=pid,
+            process_name=Path(executable_path).name if executable_path else None,
+            executable_path=executable_path,
         )
 
     def _capture_screen(self, arguments: dict) -> ToolExecutionOutcome:
@@ -205,13 +224,66 @@ class DesktopToolExecutor:
             if length <= 0:
                 return True
 
-            buffer = ctypes.create_unicode_buffer(length + 1)
-            user32.GetWindowTextW(hwnd, buffer, length + 1)
-            matches.append(WindowInfo(handle=int(hwnd), title=buffer.value))
+            executable_path = self._get_process_executable_path(window_pid.value)
+            matches.append(
+                WindowInfo(
+                    handle=int(hwnd),
+                    title=self._get_window_title(hwnd),
+                    process_id=int(window_pid.value),
+                    process_name=Path(executable_path).name
+                    if executable_path
+                    else None,
+                    executable_path=executable_path,
+                )
+            )
             return False
 
         user32.EnumWindows(enum_windows_proc(callback), 0)
         return matches[0] if matches else None
+
+    @staticmethod
+    def _get_window_title(hwnd: Any) -> str:
+        user32 = ctypes.windll.user32
+        length = user32.GetWindowTextLengthW(hwnd)
+        if length <= 0:
+            return ""
+
+        buffer = ctypes.create_unicode_buffer(length + 1)
+        user32.GetWindowTextW(hwnd, buffer, length + 1)
+        return buffer.value
+
+    @staticmethod
+    def _get_window_process_id(hwnd: Any) -> int | None:
+        window_pid = ctypes.c_ulong()
+        ctypes.windll.user32.GetWindowThreadProcessId(hwnd, ctypes.byref(window_pid))
+        return int(window_pid.value) if window_pid.value else None
+
+    @staticmethod
+    def _get_process_executable_path(pid: int) -> str | None:
+        kernel32 = ctypes.windll.kernel32
+        process_query_limited_information = 0x1000
+        process = kernel32.OpenProcess(
+            process_query_limited_information,
+            False,
+            pid,
+        )
+        if not process:
+            return None
+
+        try:
+            capacity = 32768
+            buffer = ctypes.create_unicode_buffer(capacity)
+            size = ctypes.c_ulong(capacity)
+            if kernel32.QueryFullProcessImageNameW(
+                process,
+                0,
+                buffer,
+                ctypes.byref(size),
+            ):
+                return buffer.value
+            return None
+        finally:
+            kernel32.CloseHandle(process)
 
 
 def _is_truthy_env(name: str) -> bool:

@@ -72,6 +72,22 @@ def test_tool_request_returns_approval_request_when_confirmation_is_needed() -> 
     assert executor.calls == []
 
 
+def test_auto_allowed_active_window_executes_without_approval() -> None:
+    executor = FakeExecutor()
+    service = DesktopAgentService(
+        policy_engine=PolicyEngine(),
+        executor=executor,
+        pending_store=PendingToolStore(),
+    )
+
+    response = service.handle(build_tool_request("get_active_window", "auto_allowed"))
+
+    assert response.type == "tool_result"
+    assert response.payload.status == "success"
+    assert response.payload.result == {"ok": True, "tool_name": "get_active_window"}
+    assert executor.calls == [("get_active_window", {})]
+
+
 def test_approved_tool_request_executes_after_approval() -> None:
     executor = FakeExecutor()
     store = PendingToolStore()

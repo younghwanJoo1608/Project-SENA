@@ -194,6 +194,19 @@ Allowed MVP tools:
 
 Any tool outside the known set is invalid in `v0.1`.
 
+### `get_active_window`
+
+`get_active_window` is an observation-only desktop tool. It may be requested with
+`approval_policy: "auto_allowed"` because it does not mutate desktop state.
+
+Successful `tool_result.payload.result` fields:
+
+- `window_title`: foreground window title, if available;
+- `window_handle`: Win32 window handle as an integer;
+- `process_id`: owning process id, if available;
+- `process_name`: owning process executable name, if available;
+- `executable_path`: owning process executable path, if available.
+
 ## Versioning Rule
 
 Additive changes are preferred.
