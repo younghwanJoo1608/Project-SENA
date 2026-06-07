@@ -41,15 +41,17 @@ class FakeDesktopAgentClient:
             source="desktop-agent",
             payload={
                 "tool_name": "open_app",
-                "status": "success",
+                "status": "success" if message.payload.approved else "denied",
                 "result": {
-                    "launched": True,
+                    "launched": bool(message.payload.approved),
                     "app_name": "notepad",
-                    "pid": 9999,
-                    "process_alive": True,
+                    "pid": 9999 if message.payload.approved else None,
+                    "process_alive": bool(message.payload.approved),
                     "window_detected": False,
                 },
-                "error_message": None,
+                "error_message": None
+                if message.payload.approved
+                else message.payload.decision_reason,
             },
         )
 
@@ -261,3 +263,50 @@ def test_stale_approval_result_does_not_dispatch_to_desktop_agent():
     assert desktop_agent_client.dispatched_types == []
     assert result[0].type == "error"
     assert result[0].payload.code == "stale_approval_result"
+
+
+def test_denied_approval_result_clears_pending_tool_for_next_request():
+    desktop_agent_client = FakeDesktopAgentClient()
+    orchestrator = make_orchestrator(desktop_agent_client=desktop_agent_client)
+    first_message = UserTextMessage(
+        type="user_text",
+        message_id="msg-deny-first",
+        session_id="session-deny",
+        timestamp=datetime.now(UTC),
+        source="unity-client",
+        payload={"text": "메모장 열어줘", "language": "ko", "input_mode": "typed"},
+    )
+    approval_message = ApprovalResultMessage(
+        type="approval_result",
+        message_id="msg-deny-approval",
+        session_id="session-deny",
+        timestamp=datetime.now(UTC),
+        source="unity-client",
+        payload={
+            "approved": False,
+            "decision_reason": "cancelled by new session",
+        },
+    )
+    second_message = UserTextMessage(
+        type="user_text",
+        message_id="msg-deny-second",
+        session_id="session-deny",
+        timestamp=datetime.now(UTC),
+        source="unity-client",
+        payload={"text": "다시 메모장 열어줘", "language": "ko", "input_mode": "typed"},
+    )
+
+    orchestrator.handle(first_message)
+    denial_result = orchestrator.handle(approval_message)
+    second_result = orchestrator.handle(second_message)
+
+    assert desktop_agent_client.dispatched_types == [
+        "tool_request",
+        "approval_result",
+        "tool_request",
+    ]
+    assert any(item.type == "tool_result" for item in denial_result)
+    assert next(
+        item for item in denial_result if item.type == "tool_result"
+    ).payload.status == "denied"
+    assert any(item.type == "approval_request" for item in second_result)

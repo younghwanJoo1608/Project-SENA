@@ -134,8 +134,8 @@ Unity Editor 안에서의 성공과 standalone 실행 성공은 다르다.
 - 2026-06-06: inference-server가 pending approval 중 새 user_text/tool planning을 막고 먼저 승인/거절을 요구하도록 함.
 - 2026-06-06: inference-server가 pending approval이 없는 approval_result를 stale approval로 처리하고 desktop-agent로 내려보내지 않도록 함.
 - 2026-06-06: desktop-agent도 `message_id` 응답 캐시와 session별 pending tool 중복 방어를 추가함.
-- 2026-06-06: Unity에 런타임 생성 방식의 "새 대화" 버튼을 추가함. 버튼은 새 session_id를 만들고 채팅 로그, 승인 패널, 입력창 상태를 초기화한다.
-- 남은 작업: pending approval이 있을 때 "새 대화"가 이전 session의 pending tool을 서버/desktop-agent에 어떻게 폐기 통보할지 정책을 정한다. 현재 1차 구현은 Unity 클라이언트의 새 세션 시작에 집중한다.
+- 2026-06-06: Unity Hierarchy에 정적 "새 대화" 버튼을 추가함. 버튼은 새 session_id를 만들고 채팅 로그, 승인 패널, 입력창 상태를 초기화한다.
+- 2026-06-06: pending approval 중 "새 대화"를 누르면 이전 session_id로 `approval_result(approved=false)`를 보내 서버/desktop-agent의 pending tool을 취소하도록 함.
 
 ## 4. Desktop tool 확장 검증
 

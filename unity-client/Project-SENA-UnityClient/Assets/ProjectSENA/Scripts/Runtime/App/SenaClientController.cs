@@ -271,6 +271,12 @@ namespace ProjectSENA.App
             }
 
             bool closedPendingApproval = _approvalPending;
+            string previousSessionId = _sessionId;
+            if (closedPendingApproval)
+            {
+                StartCoroutine(CancelPendingApprovalForSession(previousSessionId));
+            }
+
             _sessionId = CreateSessionId();
             _approvalPending = false;
             _submitDeferredUntilCompositionEnds = false;
@@ -281,7 +287,7 @@ namespace ProjectSENA.App
             chatPanel?.Clear();
             chatPanel?.AppendSystemMessage(
                 closedPendingApproval
-                    ? "\uC2B9\uC778 \uCC3D\uC744 \uB2EB\uACE0 \uC0C8 \uB300\uD654\uB97C \uC2DC\uC791\uD588\uC5B4."
+                    ? "\uC0C8 \uB300\uD654\uB97C \uC2DC\uC791\uD558\uBA74\uC11C \uC774\uC804 \uC571 \uC2E4\uD589 \uC694\uCCAD\uC744 \uCDE8\uC18C\uD588\uC5B4."
                     : "\uC0C8 \uB300\uD654\uB97C \uC2DC\uC791\uD588\uC5B4.");
 
             ClearCurrentInputText();
@@ -290,6 +296,24 @@ namespace ProjectSENA.App
             UpdateAssistantState("idle", "Waiting for input.");
             UpdateSendInteractivity();
             _reactivateInputNextFrame = true;
+        }
+
+        private IEnumerator CancelPendingApprovalForSession(string sessionId)
+        {
+            if (_apiClient == null || string.IsNullOrEmpty(sessionId))
+            {
+                yield break;
+            }
+
+            SenaEnvelope cancellation = SenaRequestFactory.CreateApprovalResult(
+                sessionId,
+                false,
+                "Unity UI\uC5D0\uC11C \uC0C8 \uB300\uD654\uB97C \uC2DC\uC791\uD574\uC11C \uC774\uC804 \uC2B9\uC778 \uC694\uCCAD\uC744 \uCDE8\uC18C\uD588\uC5B4.");
+
+            yield return _apiClient.PostMessage(
+                cancellation,
+                _ => { },
+                error => Debug.LogWarning($"Project-SENA approval cancellation failed: {error}"));
         }
 
         private void HandleInputFieldValueChanged(string _)
