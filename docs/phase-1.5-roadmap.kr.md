@@ -169,6 +169,8 @@ Phase 1.5에서는 최소 1~2개의 tool을 더 붙여서 구조가 일반화되
 ### 진행 기록
 
 - 2026-06-07: `get_active_window`를 observation-only `auto_allowed` tool로 검증함. desktop-agent는 foreground window title, handle, process id/name/path를 반환하고, inference-server와 Unity가 approval 없이 결과를 표시한다.
+- 2026-06-07: `type_text` foreground 기반 1차 구현을 추가함. desktop-agent는 approval request 생성 시 foreground window를 기록하고, 승인 후 window가 바뀌었으면 입력하지 않도록 한다. inference-server는 `입력해줘`, `써줘`, `type ...` 요청을 `type_text`로 planning한다.
+- 2026-06-09: `type_text`가 `target_app: notepad`를 통해 이미 열려 있는 메모장 창을 찾아 입력할 수 있도록 확장함. 명시 대상이 있으면 마지막 `open_app` 대상이나 Unity foreground보다 우선한다.
 
 ## 5. 다음 Phase를 위한 구조 정리
 

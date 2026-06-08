@@ -47,7 +47,7 @@ class FakeDesktopAgentClient:
                 timestamp=datetime.now(UTC),
                 source="desktop-agent",
                 payload={
-                    "tool_name": "open_app",
+                    "tool_name": message.payload.tool_name,
                     "reason": message.payload.reason,
                     "risk_level": message.payload.risk_level,
                     "prompt": "The request requires explicit user confirmation.",
@@ -68,7 +68,14 @@ class FakeDesktopAgentClient:
                     "app_name": "notepad",
                     "pid": 9999 if message.payload.approved else None,
                     "process_alive": bool(message.payload.approved),
-                    "window_detected": False,
+                    "window_detected": bool(message.payload.approved),
+                    "window_handle": 1001 if message.payload.approved else None,
+                    "window_title": "Untitled - Notepad"
+                    if message.payload.approved
+                    else None,
+                    "process_name": "notepad.exe"
+                    if message.payload.approved
+                    else None,
                 },
                 "error_message": None
                 if message.payload.approved
@@ -185,6 +192,130 @@ def test_active_window_request_dispatches_auto_allowed_tool():
     assert tool_result.payload.result["process_name"] == "Unity.exe"
     assert result[-1].type == "assistant_state"
     assert result[-1].payload.state == "idle"
+
+
+def test_type_text_request_produces_user_confirmed_tool_request():
+    orchestrator = make_orchestrator()
+    message = UserTextMessage(
+        type="user_text",
+        message_id="msg-type-text",
+        session_id="session-type-text",
+        timestamp=datetime.now(UTC),
+        source="unity-client",
+        payload={
+            "text": "\uc548\ub155\ud558\uc138\uc694 \uc785\ub825\ud574\uc918",
+            "language": "ko",
+            "input_mode": "typed",
+        },
+    )
+
+    result = orchestrator.handle(message)
+
+    tool_request = next(item for item in result if item.type == "tool_request")
+    assert tool_request.payload.tool_name == "type_text"
+    assert tool_request.payload.arguments == {"text": "\uc548\ub155\ud558\uc138\uc694"}
+    assert tool_request.payload.approval_policy == "user_confirmation"
+    assert tool_request.payload.risk_level == "medium"
+
+
+def test_type_text_request_can_target_already_open_notepad():
+    orchestrator = make_orchestrator()
+    message = UserTextMessage(
+        type="user_text",
+        message_id="msg-type-text-existing-notepad",
+        session_id="session-type-text-existing-notepad",
+        timestamp=datetime.now(UTC),
+        source="unity-client",
+        payload={
+            "text": "\uba54\ubaa8\uc7a5\uc5d0 \uc548\ub155\ud558\uc138\uc694 \uc785\ub825\ud574\uc918",
+            "language": "ko",
+            "input_mode": "typed",
+        },
+    )
+
+    result = orchestrator.handle(message)
+
+    tool_request = next(item for item in result if item.type == "tool_request")
+    assert tool_request.payload.tool_name == "type_text"
+    assert tool_request.payload.arguments == {
+        "text": "\uc548\ub155\ud558\uc138\uc694",
+        "target_app": "notepad",
+    }
+
+
+def test_type_text_request_dispatches_to_desktop_agent_when_enabled():
+    desktop_agent_client = FakeDesktopAgentClient()
+    orchestrator = make_orchestrator(desktop_agent_client=desktop_agent_client)
+    message = UserTextMessage(
+        type="user_text",
+        message_id="msg-type-text-dispatch",
+        session_id="session-type-text-dispatch",
+        timestamp=datetime.now(UTC),
+        source="unity-client",
+        payload={
+            "text": "type hello SENA",
+            "language": "en",
+            "input_mode": "typed",
+        },
+    )
+
+    result = orchestrator.handle(message)
+
+    assert desktop_agent_client.dispatched_types == ["tool_request"]
+    approval_request = next(item for item in result if item.type == "approval_request")
+    assert approval_request.payload.tool_name == "type_text"
+    assert approval_request.payload.arguments == {"text": "hello SENA"}
+
+
+def test_type_text_request_reuses_last_opened_desktop_target():
+    desktop_agent_client = FakeDesktopAgentClient()
+    orchestrator = make_orchestrator(desktop_agent_client=desktop_agent_client)
+    open_message = UserTextMessage(
+        type="user_text",
+        message_id="msg-open-before-type",
+        session_id="session-open-before-type",
+        timestamp=datetime.now(UTC),
+        source="unity-client",
+        payload={
+            "text": "\uba54\ubaa8\uc7a5 \uc5f4\uc5b4\uc918",
+            "language": "ko",
+            "input_mode": "typed",
+        },
+    )
+    orchestrator.handle(open_message)
+    approval_message = ApprovalResultMessage(
+        type="approval_result",
+        message_id="msg-open-before-type-approval",
+        session_id="session-open-before-type",
+        timestamp=datetime.now(UTC),
+        source="unity-client",
+        payload={
+            "approved": True,
+            "decision_reason": "approved in test",
+        },
+    )
+    orchestrator.handle(approval_message)
+    type_message = UserTextMessage(
+        type="user_text",
+        message_id="msg-type-after-open",
+        session_id="session-open-before-type",
+        timestamp=datetime.now(UTC),
+        source="unity-client",
+        payload={
+            "text": "\uc548\ub155 \uc785\ub825\ud574\uc918",
+            "language": "ko",
+            "input_mode": "typed",
+        },
+    )
+
+    result = orchestrator.handle(type_message)
+
+    approval_request = next(item for item in result if item.type == "approval_request")
+    assert approval_request.payload.tool_name == "type_text"
+    assert approval_request.payload.arguments["text"] == "\uc548\ub155"
+    assert approval_request.payload.arguments["expected_window_handle"] == 1001
+    assert approval_request.payload.arguments["expected_window_title"] == "Untitled - Notepad"
+    assert approval_request.payload.arguments["expected_process_name"] == "notepad.exe"
 
 
 def test_notepad_request_dispatches_to_desktop_agent_when_enabled():

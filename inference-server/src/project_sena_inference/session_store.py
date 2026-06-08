@@ -15,6 +15,7 @@ class SessionState:
     recent_user_texts: list[str] = field(default_factory=list)
     recent_assistant_texts: list[str] = field(default_factory=list)
     latest_screen_context: str | None = None
+    latest_desktop_target: dict[str, Any] | None = None
     pending_tool_name: str | None = None
     pending_tool_request_id: str | None = None
     pending_tool_state: str | None = None

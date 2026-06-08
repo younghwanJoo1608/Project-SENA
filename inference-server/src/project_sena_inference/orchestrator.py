@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from typing import cast
 
 from project_sena_inference.adapters.desktop_agent import (
@@ -135,7 +136,7 @@ class Orchestrator:
             )
         ]
 
-        tool_request = self._maybe_plan_tool_request(session.session_id, user_text)
+        tool_request = self._maybe_plan_tool_request(session, user_text)
         if tool_request is not None:
             if self._desktop_agent_client is None:
                 if tool_request.payload.approval_policy == "auto_allowed":
@@ -323,6 +324,7 @@ class Orchestrator:
         session: SessionState,
         message: ToolResultMessage,
     ) -> list[OutboundMessage]:
+        self._update_desktop_target_from_tool_result(session, message)
         session.clear_pending_tool()
         if message.payload.status == "success":
             if message.payload.tool_name in SELF_DESCRIBING_SUCCESS_TOOLS:
@@ -373,7 +375,7 @@ class Orchestrator:
             ),
         ]
 
-    def _maybe_plan_tool_request(self, session_id: str, user_text: str):
+    def _maybe_plan_tool_request(self, session: SessionState, user_text: str):
         lowered = user_text.lower()
         if self._failure_injection_enabled and (
             "failure test" in lowered
@@ -381,7 +383,7 @@ class Orchestrator:
             or "\uc2e4\ud328 \ud14c\uc2a4\ud2b8" in user_text
         ):
             return make_tool_request(
-                session_id=session_id,
+                session_id=session.session_id,
                 tool_name="open_app",
                 arguments={"app_name": TEST_FAILURE_APP_NAME},
                 reason="Project-SENA failure injection test requested.",
@@ -389,9 +391,27 @@ class Orchestrator:
                 approval_policy="user_confirmation",
             )
 
+        type_text_request = _extract_type_text_request(user_text, lowered)
+        if type_text_request:
+            arguments = {"text": type_text_request["text"]}
+            target_app = type_text_request.get("target_app")
+            if target_app:
+                arguments["target_app"] = target_app
+            elif session.latest_desktop_target:
+                arguments.update(session.latest_desktop_target)
+
+            return make_tool_request(
+                session_id=session.session_id,
+                tool_name="type_text",
+                arguments=arguments,
+                reason="The user asked to type text into the active foreground window.",
+                risk_level="medium",
+                approval_policy="user_confirmation",
+            )
+
         if "\uba54\ubaa8\uc7a5" in user_text or "notepad" in lowered:
             return make_tool_request(
-                session_id=session_id,
+                session_id=session.session_id,
                 tool_name="open_app",
                 arguments={"app_name": "notepad"},
                 reason="The user asked to open a plain text editor.",
@@ -400,7 +420,7 @@ class Orchestrator:
             )
         if "\ud604\uc7ac \ucc3d" in user_text or "active window" in lowered:
             return make_tool_request(
-                session_id=session_id,
+                session_id=session.session_id,
                 tool_name="get_active_window",
                 arguments={},
                 reason="The user asked for current active window context.",
@@ -554,6 +574,30 @@ class Orchestrator:
             ),
         ]
 
+    @staticmethod
+    def _update_desktop_target_from_tool_result(
+        session: SessionState,
+        message: ToolResultMessage,
+    ) -> None:
+        if (
+            message.payload.status != "success"
+            or message.payload.tool_name != "open_app"
+        ):
+            return
+
+        result = message.payload.result
+        window_handle = result.get("window_handle")
+        if not window_handle:
+            return
+
+        session.latest_desktop_target = {
+            "expected_window_title": result.get("window_title"),
+            "expected_window_handle": window_handle,
+            "expected_process_id": result.get("process_id") or result.get("pid"),
+            "expected_process_name": result.get("process_name"),
+            "expected_executable_path": result.get("executable_path"),
+        }
+
 
 def _tool_display_name(tool_name: str) -> str:
     return {
@@ -562,3 +606,56 @@ def _tool_display_name(tool_name: str) -> str:
         "capture_screen": "\ud654\uba74 \ucea1\ucc98",
         "type_text": "\ud14d\uc2a4\ud2b8 \uc785\ub825",
     }.get(tool_name, tool_name)
+
+
+def _extract_type_text_request(user_text: str, lowered: str) -> dict[str, str] | None:
+    if lowered.startswith("type "):
+        return _clean_type_text_candidate(user_text[5:])
+    if lowered.startswith("enter "):
+        return _clean_type_text_candidate(user_text[6:])
+
+    quoted_match = re.search(
+        r"[\u0022\u0027\u201c\u201d\u2018\u2019](.+?)[\u0022\u0027\u201c\u201d\u2018\u2019]"
+        r"\s*(?:\ub77c\uace0\s*)?(?:\uc785\ub825|\uc368)",
+        user_text,
+    )
+    if quoted_match:
+        request = _clean_type_text_candidate(quoted_match.group(1))
+        if request and "\uba54\ubaa8\uc7a5" in user_text:
+            request["target_app"] = "notepad"
+        return request
+
+    for marker in ("\uc785\ub825", "\uc368"):
+        marker_index = user_text.find(marker)
+        if marker_index > 0:
+            return _clean_type_text_candidate(user_text[:marker_index])
+
+    return None
+
+
+def _clean_type_text_candidate(candidate: str) -> dict[str, str] | None:
+    text = candidate.strip()
+    target_app: str | None = None
+    for prefix, prefix_target_app in (
+        ("\ud604\uc7ac \ucc3d\uc5d0 ", None),
+        ("\uc5ec\uae30\uc5d0 ", None),
+        ("\uc5f4\ub824 \uc788\ub294 \uba54\ubaa8\uc7a5\uc5d0 ", "notepad"),
+        ("\uba54\ubaa8\uc7a5\uc5d0 ", "notepad"),
+        ("notepad에 ", "notepad"),
+        ("notepad ", "notepad"),
+    ):
+        if text.startswith(prefix):
+            text = text[len(prefix) :].strip()
+            target_app = prefix_target_app
+            break
+
+    if text.endswith("\ub77c\uace0"):
+        text = text[: -len("\ub77c\uace0")].strip()
+
+    if not text:
+        return None
+
+    request = {"text": text}
+    if target_app:
+        request["target_app"] = target_app
+    return request

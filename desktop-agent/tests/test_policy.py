@@ -34,3 +34,11 @@ def test_auto_allowed_active_window_executes() -> None:
     decision = engine.evaluate(build_request("get_active_window", "auto_allowed"))
 
     assert decision.action == "execute"
+
+
+def test_type_text_always_requests_approval() -> None:
+    engine = PolicyEngine()
+
+    decision = engine.evaluate(build_request("type_text", "auto_allowed"))
+
+    assert decision.action == "request_approval"

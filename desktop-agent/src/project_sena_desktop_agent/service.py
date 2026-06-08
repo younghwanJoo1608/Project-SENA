@@ -54,6 +54,29 @@ class ProcessedMessageStore:
             self.responses_by_message_id.pop(expired_message_id, None)
 
 
+@dataclass(slots=True)
+class DesktopTargetStore:
+    targets_by_session: dict[str, dict] = field(default_factory=dict)
+
+    def remember_open_app_result(self, session_id: str, result: dict) -> None:
+        if not result.get("launched"):
+            return
+
+        target = {
+            "app_name": result.get("app_name"),
+            "expected_window_title": result.get("window_title"),
+            "expected_window_handle": result.get("window_handle"),
+            "expected_process_id": result.get("process_id") or result.get("pid"),
+            "expected_process_name": result.get("process_name"),
+            "expected_executable_path": result.get("executable_path"),
+        }
+        self.targets_by_session[session_id] = target
+
+    def get(self, session_id: str) -> dict | None:
+        target = self.targets_by_session.get(session_id)
+        return dict(target) if target is not None else None
+
+
 class DesktopAgentService:
     """Coordinates policy decisions and local tool execution."""
 
@@ -63,11 +86,13 @@ class DesktopAgentService:
         executor: DesktopToolExecutor | None = None,
         pending_store: PendingToolStore | None = None,
         processed_store: ProcessedMessageStore | None = None,
+        target_store: DesktopTargetStore | None = None,
     ) -> None:
         self._policy = policy_engine or PolicyEngine()
         self._executor = executor or DesktopToolExecutor()
         self._pending_store = pending_store or PendingToolStore()
         self._processed_store = processed_store or ProcessedMessageStore()
+        self._target_store = target_store or DesktopTargetStore()
 
     def handle(self, message: InboundMessage) -> OutboundMessage:
         cached_response = self._processed_store.get(message.message_id)
@@ -96,6 +121,17 @@ class DesktopAgentService:
                 code="pending_tool_exists",
                 message="A tool request is already waiting for approval.",
                 retryable=False,
+            )
+
+        try:
+            request = self._prepare_tool_request(request)
+        except ToolExecutionError as exc:
+            return make_tool_result(
+                session_id=request.session_id,
+                tool_name=request.payload.tool_name,
+                status="error",
+                result=exc.result,
+                error_message=str(exc),
             )
 
         decision = self._policy.evaluate(request)
@@ -155,6 +191,23 @@ class DesktopAgentService:
                 result=exc.result,
                 error_message=str(exc),
             )
+        except Exception as exc:  # pragma: no cover - defensive boundary
+            return make_tool_result(
+                session_id=request.session_id,
+                tool_name=request.payload.tool_name,
+                status="error",
+                result={
+                    "reason": "unexpected_executor_error",
+                    "error_type": type(exc).__name__,
+                },
+                error_message=str(exc),
+            )
+
+        if request.payload.tool_name == "open_app":
+            self._target_store.remember_open_app_result(
+                request.session_id,
+                outcome.result,
+            )
 
         return make_tool_result(
             session_id=request.session_id,
@@ -162,3 +215,69 @@ class DesktopAgentService:
             status="success",
             result=outcome.result,
         )
+
+    def _prepare_tool_request(self, request: ToolRequestMessage) -> ToolRequestMessage:
+        if request.payload.tool_name != "type_text":
+            return request
+
+        arguments = dict(request.payload.arguments)
+        if "expected_window_handle" in arguments or "expected_process_id" in arguments:
+            return request
+
+        target_app = str(arguments.get("target_app") or "").strip()
+        if target_app:
+            window = self._executor.resolve_window_target({"target_app": target_app})
+            if window is None:
+                raise ToolExecutionError(
+                    "The requested app window could not be found for type_text.",
+                    result={
+                        "typed": False,
+                        "reason": "target_app_window_not_found",
+                        "target_app": target_app,
+                    },
+                )
+
+            return self._with_expected_window(request, arguments, window)
+
+        remembered_target = self._target_store.get(request.session_id)
+        if remembered_target is not None:
+            window = self._executor.resolve_window_target(remembered_target)
+            if window is None:
+                raise ToolExecutionError(
+                    "The last desktop target window could not be found for type_text.",
+                    result={
+                        "typed": False,
+                        "reason": "target_window_not_found",
+                        "expected_window": remembered_target,
+                    },
+                )
+
+            arguments.update(remembered_target)
+            return self._with_expected_window(request, arguments, window)
+
+        window = self._executor.get_foreground_window()
+        if window is None:
+            raise ToolExecutionError(
+                "No active foreground window was detected for type_text.",
+                result={"typed": False, "reason": "missing_foreground_window"},
+            )
+
+        return self._with_expected_window(request, arguments, window)
+
+    @staticmethod
+    def _with_expected_window(
+        request: ToolRequestMessage,
+        arguments: dict,
+        window,
+    ) -> ToolRequestMessage:
+        arguments.update(
+            {
+                "expected_window_title": window.title,
+                "expected_window_handle": window.handle,
+                "expected_process_id": window.process_id,
+                "expected_process_name": window.process_name,
+                "expected_executable_path": window.executable_path,
+            }
+        )
+        payload = request.payload.model_copy(update={"arguments": arguments})
+        return request.model_copy(update={"payload": payload})
