@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from .executor import DesktopToolExecutor, ToolExecutionError
+from .executor import DesktopToolExecutor, ToolExecutionError, WindowInfo
 from .policy import PolicyEngine
 from .protocol import (
     ApprovalResultMessage,
@@ -217,9 +217,16 @@ class DesktopAgentService:
         )
 
     def _prepare_tool_request(self, request: ToolRequestMessage) -> ToolRequestMessage:
-        if request.payload.tool_name != "type_text":
-            return request
+        if request.payload.tool_name == "capture_screen":
+            return self._prepare_capture_request(request)
+        if request.payload.tool_name == "type_text":
+            return self._prepare_type_text_request(request)
+        return request
 
+    def _prepare_type_text_request(
+        self,
+        request: ToolRequestMessage,
+    ) -> ToolRequestMessage:
         arguments = dict(request.payload.arguments)
         if "expected_window_handle" in arguments or "expected_process_id" in arguments:
             return request
@@ -264,11 +271,70 @@ class DesktopAgentService:
 
         return self._with_expected_window(request, arguments, window)
 
+    def _prepare_capture_request(
+        self,
+        request: ToolRequestMessage,
+    ) -> ToolRequestMessage:
+        arguments = dict(request.payload.arguments)
+        capture_mode = str(arguments.get("capture_mode") or "all_screens").strip()
+        arguments["capture_mode"] = capture_mode
+
+        if capture_mode in {"all_screens", "full_screen"}:
+            payload = request.payload.model_copy(update={"arguments": arguments})
+            return request.model_copy(update={"payload": payload})
+
+        if "expected_window_handle" in arguments or "expected_process_id" in arguments:
+            return request
+
+        if capture_mode == "active_window":
+            window = self._executor.get_foreground_window()
+            if window is None:
+                raise ToolExecutionError(
+                    "No active foreground window was detected for capture_screen.",
+                    result={
+                        "saved": False,
+                        "reason": "missing_foreground_window",
+                        "capture_mode": capture_mode,
+                    },
+                )
+            return self._with_expected_window(request, arguments, window)
+
+        if capture_mode == "target_window":
+            window = self._resolve_capture_target_window(arguments)
+            return self._with_expected_window(request, arguments, window)
+
+        raise ToolExecutionError(
+            "Unsupported capture mode.",
+            result={
+                "saved": False,
+                "reason": "unsupported_capture_mode",
+                "capture_mode": capture_mode,
+            },
+        )
+
+    def _resolve_capture_target_window(self, arguments: dict) -> WindowInfo:
+        window = self._executor.resolve_window_target(arguments)
+        if window is not None:
+            return window
+
+        target_app = str(arguments.get("target_app") or "").strip()
+        raise ToolExecutionError(
+            "The requested window could not be found for capture_screen.",
+            result={
+                "saved": False,
+                "reason": "target_app_window_not_found"
+                if target_app
+                else "target_window_not_found",
+                "capture_mode": "target_window",
+                "target_app": target_app or None,
+            },
+        )
+
     @staticmethod
     def _with_expected_window(
         request: ToolRequestMessage,
         arguments: dict,
-        window,
+        window: WindowInfo,
     ) -> ToolRequestMessage:
         arguments.update(
             {

@@ -194,6 +194,41 @@ Allowed MVP tools:
 
 Any tool outside the known set is invalid in `v0.1`.
 
+### `capture_screen`
+
+`capture_screen` saves a visible desktop screenshot to a PNG file. It may expose
+private desktop contents and must use `approval_policy: "user_confirmation"`.
+
+Required `tool_request.payload.arguments` fields:
+
+- `capture_mode`: one of `all_screens`, `active_window`, or `target_window`.
+
+Optional fields:
+
+- `target_app`: app alias to resolve for `target_window`, currently `notepad`;
+- `window_title_contains`: title matching hint for future target-window
+  selection;
+- `output_format`: currently only `png`;
+- `output_path`: explicit save path. If omitted, desktop-agent saves under the
+  local Project-SENA capture directory.
+
+For `active_window`, desktop-agent records the current foreground window before
+creating the `approval_request`. For `target_window`, desktop-agent resolves the
+requested window before creating the `approval_request`. The resolved window
+metadata is added with the same expected-window fields used by `type_text`.
+
+Successful `tool_result.payload.result` fields:
+
+- `saved`: `true`;
+- `output_path`: PNG file path;
+- `width`: image width in pixels;
+- `height`: image height in pixels;
+- `capture_mode`: normalized capture mode;
+- `output_format`: `png`;
+- `target_window`: window metadata for window captures, if applicable;
+- `capture_rect`: captured desktop rectangle for window captures, if
+  applicable.
+
 ### `get_active_window`
 
 `get_active_window` is an observation-only desktop tool. It may be requested with

@@ -31,6 +31,54 @@ Project-SENA는 네 가지 주요 영역으로 구성됩니다.
 2. 이후 추론 작업을 게이밍 노트북으로 분리합니다.
 3. 장기적으로 노트북 서버를 고급 추론 전용 PC로 교체합니다.
 
+## 실행 방법
+
+PC를 껐다 켠 뒤에는 PowerShell 7 창을 두 개 열고, `desktop-agent`와 `inference-server`를 각각 실행합니다.
+
+### 1. desktop-agent 실행
+
+첫 번째 PowerShell 7 창:
+
+```powershell
+cd "G:\Repos\LLM Vtuber Agent\desktop-agent"
+.\.venv\Scripts\python -m uvicorn project_sena_desktop_agent.api:app --reload --port 8010
+```
+
+정상 실행 확인:
+
+```powershell
+Invoke-RestMethod http://127.0.0.1:8010/health
+```
+
+### 2. inference-server 실행
+
+두 번째 PowerShell 7 창:
+
+```powershell
+cd "G:\Repos\LLM Vtuber Agent\inference-server"
+$env:PROJECT_SENA_DESKTOP_AGENT_URL = "http://127.0.0.1:8010"
+.\.venv\Scripts\python -m uvicorn project_sena_inference.main:app --reload --port 8000
+```
+
+정상 실행 확인:
+
+```powershell
+Invoke-RestMethod http://127.0.0.1:8000/health
+```
+
+### 3. Unity client 실행
+
+두 서버가 모두 켜진 뒤 Unity Editor에서 `Project-SENA-UnityClient`를 열고 Play 버튼을 누릅니다. 빌드된 standalone 앱을 사용할 때도 서버 두 개를 먼저 실행한 뒤 앱을 실행합니다.
+
+### 처음 설정하거나 의존성이 바뀐 경우
+
+`.venv`가 없거나 `pyproject.toml` 의존성이 바뀐 경우에만 각 폴더에서 아래 명령을 실행합니다.
+
+```powershell
+python -m venv .venv
+.\.venv\Scripts\python -m pip install -e .[dev]
+```
+
 ## 참고 프로젝트
 
 ProjectLucia 저장소들은 분석과 선택적 재사용을 위해 `references/` 아래에 보관합니다. 이 폴더는 이 저장소의 커밋 대상에서 제외됩니다.

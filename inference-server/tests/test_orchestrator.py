@@ -194,6 +194,84 @@ def test_active_window_request_dispatches_auto_allowed_tool():
     assert result[-1].payload.state == "idle"
 
 
+def test_all_screens_capture_request_produces_confirmed_tool_request():
+    orchestrator = make_orchestrator()
+    message = UserTextMessage(
+        type="user_text",
+        message_id="msg-capture-all",
+        session_id="session-capture-all",
+        timestamp=datetime.now(UTC),
+        source="unity-client",
+        payload={
+            "text": "\uc804\uccb4 \ud654\uba74 \ucea1\ucc98\ud574\uc918",
+            "language": "ko",
+            "input_mode": "typed",
+        },
+    )
+
+    result = orchestrator.handle(message)
+
+    tool_request = next(item for item in result if item.type == "tool_request")
+    assert tool_request.payload.tool_name == "capture_screen"
+    assert tool_request.payload.arguments == {
+        "capture_mode": "all_screens",
+        "output_format": "png",
+    }
+    assert tool_request.payload.approval_policy == "user_confirmation"
+    assert tool_request.payload.risk_level == "medium"
+
+
+def test_active_window_capture_request_produces_confirmed_tool_request():
+    orchestrator = make_orchestrator()
+    message = UserTextMessage(
+        type="user_text",
+        message_id="msg-capture-active",
+        session_id="session-capture-active",
+        timestamp=datetime.now(UTC),
+        source="unity-client",
+        payload={
+            "text": "\ud604\uc7ac \ucc3d \ucea1\ucc98\ud574\uc918",
+            "language": "ko",
+            "input_mode": "typed",
+        },
+    )
+
+    result = orchestrator.handle(message)
+
+    tool_request = next(item for item in result if item.type == "tool_request")
+    assert tool_request.payload.tool_name == "capture_screen"
+    assert tool_request.payload.arguments == {
+        "capture_mode": "active_window",
+        "output_format": "png",
+    }
+
+
+def test_target_window_capture_request_uses_target_app_before_open_app_planning():
+    orchestrator = make_orchestrator()
+    message = UserTextMessage(
+        type="user_text",
+        message_id="msg-capture-notepad",
+        session_id="session-capture-notepad",
+        timestamp=datetime.now(UTC),
+        source="unity-client",
+        payload={
+            "text": "\uba54\ubaa8\uc7a5 \ucea1\ucc98\ud574\uc918",
+            "language": "ko",
+            "input_mode": "typed",
+        },
+    )
+
+    result = orchestrator.handle(message)
+
+    tool_request = next(item for item in result if item.type == "tool_request")
+    assert tool_request.payload.tool_name == "capture_screen"
+    assert tool_request.payload.arguments == {
+        "capture_mode": "target_window",
+        "output_format": "png",
+        "target_app": "notepad",
+    }
+
+
 def test_type_text_request_produces_user_confirmed_tool_request():
     orchestrator = make_orchestrator()
     message = UserTextMessage(

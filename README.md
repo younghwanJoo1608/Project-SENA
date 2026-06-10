@@ -33,6 +33,54 @@ The desktop PC acts as the assistant's eyes, ears, voice, and hands. The inferen
 2. Move inference workloads to the gaming laptop.
 3. Replace the laptop server with a dedicated high-end inference PC later.
 
+## Running Locally
+
+After rebooting the PC, open two PowerShell 7 windows and run the desktop-agent and inference-server separately.
+
+### 1. Start desktop-agent
+
+First PowerShell 7 window:
+
+```powershell
+cd "G:\Repos\LLM Vtuber Agent\desktop-agent"
+.\.venv\Scripts\python -m uvicorn project_sena_desktop_agent.api:app --reload --port 8010
+```
+
+Health check:
+
+```powershell
+Invoke-RestMethod http://127.0.0.1:8010/health
+```
+
+### 2. Start inference-server
+
+Second PowerShell 7 window:
+
+```powershell
+cd "G:\Repos\LLM Vtuber Agent\inference-server"
+$env:PROJECT_SENA_DESKTOP_AGENT_URL = "http://127.0.0.1:8010"
+.\.venv\Scripts\python -m uvicorn project_sena_inference.main:app --reload --port 8000
+```
+
+Health check:
+
+```powershell
+Invoke-RestMethod http://127.0.0.1:8000/health
+```
+
+### 3. Start Unity client
+
+After both servers are running, open `Project-SENA-UnityClient` in Unity and press Play. For a standalone build, start both servers first and then run the built app.
+
+### First setup or dependency updates
+
+Run these commands in each Python service folder only when `.venv` is missing or `pyproject.toml` dependencies changed:
+
+```powershell
+python -m venv .venv
+.\.venv\Scripts\python -m pip install -e .[dev]
+```
+
 ## Reference Projects
 
 ProjectLucia repositories are kept under `references/` for study and selective reuse. They are intentionally ignored by this repository.

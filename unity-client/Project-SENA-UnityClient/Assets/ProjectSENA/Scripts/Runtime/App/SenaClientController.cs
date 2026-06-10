@@ -932,6 +932,38 @@ namespace ProjectSENA.App
 
         private static string FormatToolError(ToolResultPayload payload)
         {
+            if (payload.tool_name == "capture_screen")
+            {
+                string reason = GetResultString(payload, "reason");
+                if (reason == "missing_foreground_window")
+                {
+                    return "\uCEA1\uCC98\uD560 \uD65C\uC131 \uCC3D\uC744 \uCC3E\uC9C0 \uBABB\uD588\uC5B4. \uBA3C\uC800 \uCEA1\uCC98\uD560 \uCC3D\uC744 \uC120\uD0DD\uD574 \uC918.";
+                }
+
+                if (reason == "target_window_not_found" ||
+                    reason == "target_app_window_not_found")
+                {
+                    return "\uCEA1\uCC98\uD560 \uB300\uC0C1 \uCC3D\uC744 \uCC3E\uC9C0 \uBABB\uD588\uC5B4. \uCC3D\uC774 \uC5F4\uB824 \uC788\uB294\uC9C0 \uD655\uC778\uD55C \uB4A4 \uB2E4\uC2DC \uC2DC\uB3C4\uD574 \uC918.";
+                }
+
+                if (reason == "window_not_capturable")
+                {
+                    return "\uB300\uC0C1 \uCC3D\uC744 \uCEA1\uCC98\uD560 \uC218 \uC5C6\uC5B4. \uCC3D\uC774 \uCD5C\uC18C\uD654\uB418\uC5B4 \uC788\uB2E4\uBA74 \uB2E4\uC2DC \uC5F4\uC5B4 \uC900 \uB4A4 \uC2DC\uB3C4\uD574 \uC918.";
+                }
+
+                if (reason == "target_window_not_foreground")
+                {
+                    return "\uCEA1\uCC98\uD560 \uB300\uC0C1 \uCC3D\uC744 \uC55E\uC73C\uB85C \uAC00\uC838\uC624\uC9C0 \uBABB\uD588\uC5B4. \uCC3D\uC744 \uD655\uC778\uD55C \uB4A4 \uB2E4\uC2DC \uC2DC\uB3C4\uD574 \uC918.";
+                }
+
+                if (reason == "unsupported_capture_mode" ||
+                    reason == "unsupported_capture_format" ||
+                    reason == "window_rect_failed")
+                {
+                    return $"\uD654\uBA74 \uCEA1\uCC98\uB97C \uC644\uB8CC\uD558\uC9C0 \uBABB\uD588\uC5B4. \uC6D0\uC778: {reason}";
+                }
+            }
+
             if (payload.tool_name == "type_text")
             {
                 string reason = GetResultString(payload, "reason");

@@ -44,7 +44,7 @@ class FakeExecutor:
         )
 
     def resolve_window_target(self, target: dict) -> WindowInfo | None:
-        self.resolve_requests.append(target)
+        self.resolve_requests.append(dict(target))
         return self.resolved_target
 
 
@@ -138,6 +138,88 @@ def test_type_text_approval_request_includes_foreground_window_snapshot() -> Non
     assert response.payload.arguments["expected_window_title"] == "Untitled - Notepad"
     assert response.payload.arguments["expected_window_handle"] == 1001
     assert response.payload.arguments["expected_process_name"] == "notepad.exe"
+    assert executor.calls == []
+
+
+def test_capture_active_window_approval_request_includes_foreground_snapshot() -> None:
+    executor = FakeExecutor()
+    service = DesktopAgentService(
+        policy_engine=PolicyEngine(),
+        executor=executor,
+        pending_store=PendingToolStore(),
+    )
+
+    response = service.handle(
+        build_tool_request(
+            "capture_screen",
+            "user_confirmation",
+            {"capture_mode": "active_window"},
+        )
+    )
+
+    assert response.type == "approval_request"
+    assert response.payload.tool_name == "capture_screen"
+    assert response.payload.arguments["capture_mode"] == "active_window"
+    assert response.payload.arguments["expected_window_handle"] == 1001
+    assert response.payload.arguments["expected_window_title"] == "Untitled - Notepad"
+    assert response.payload.arguments["expected_process_name"] == "notepad.exe"
+    assert executor.calls == []
+
+
+def test_capture_target_window_resolves_explicit_target_app() -> None:
+    executor = FakeExecutor()
+    executor.resolved_target = WindowInfo(
+        handle=3003,
+        title="Already Open - Notepad",
+        process_id=8765,
+        process_name="notepad.exe",
+        executable_path="C:\\Windows\\System32\\notepad.exe",
+    )
+    service = DesktopAgentService(
+        policy_engine=PolicyEngine(),
+        executor=executor,
+        pending_store=PendingToolStore(),
+    )
+
+    response = service.handle(
+        build_tool_request(
+            "capture_screen",
+            "user_confirmation",
+            {"capture_mode": "target_window", "target_app": "notepad"},
+            message_id="msg-capture-existing-notepad",
+        )
+    )
+
+    assert response.type == "approval_request"
+    assert executor.resolve_requests == [
+        {"capture_mode": "target_window", "target_app": "notepad"}
+    ]
+    assert response.payload.arguments["target_app"] == "notepad"
+    assert response.payload.arguments["expected_window_handle"] == 3003
+    assert response.payload.arguments["expected_window_title"] == "Already Open - Notepad"
+    assert response.payload.arguments["expected_process_name"] == "notepad.exe"
+    assert executor.calls == []
+
+
+def test_capture_all_screens_does_not_snapshot_foreground_window() -> None:
+    executor = FakeExecutor()
+    service = DesktopAgentService(
+        policy_engine=PolicyEngine(),
+        executor=executor,
+        pending_store=PendingToolStore(),
+    )
+
+    response = service.handle(
+        build_tool_request(
+            "capture_screen",
+            "user_confirmation",
+            {"capture_mode": "all_screens"},
+            message_id="msg-capture-all-screens",
+        )
+    )
+
+    assert response.type == "approval_request"
+    assert response.payload.arguments == {"capture_mode": "all_screens"}
     assert executor.calls == []
 
 

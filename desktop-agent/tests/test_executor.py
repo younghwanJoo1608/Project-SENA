@@ -15,6 +15,22 @@ class FakeProcess:
         return self._returncode
 
 
+class FakeImage:
+    def __init__(
+        self,
+        width: int = 800,
+        height: int = 600,
+        bbox: tuple[int, int, int, int] | None = None,
+    ) -> None:
+        self.width = width
+        self.height = height
+        self.bbox = bbox
+        self.saved_path: str | None = None
+
+    def save(self, output_file) -> None:
+        self.saved_path = str(output_file)
+
+
 def test_open_app_reports_window_metadata_when_process_and_window_exist(monkeypatch) -> None:
     executor = DesktopToolExecutor()
 
@@ -125,6 +141,95 @@ def test_get_active_window_raises_error_when_no_foreground_window(monkeypatch) -
         assert "No active foreground window" in str(exc)
     else:
         raise AssertionError("Expected missing foreground window to fail.")
+
+
+def test_capture_screen_saves_all_screens_to_default_path(monkeypatch, tmp_path) -> None:
+    executor = DesktopToolExecutor()
+    image = FakeImage(width=3840, height=2160)
+    monkeypatch.setenv("PROJECT_SENA_CAPTURE_DIR", str(tmp_path))
+    monkeypatch.setattr(executor, "_grab_screen_image", lambda bbox=None: image)
+
+    outcome = executor.execute("capture_screen", {"capture_mode": "all_screens"})
+
+    assert outcome.result["saved"] is True
+    assert outcome.result["capture_mode"] == "all_screens"
+    assert outcome.result["width"] == 3840
+    assert outcome.result["height"] == 2160
+    assert outcome.result["output_path"].startswith(str(tmp_path))
+    assert outcome.result["output_path"].endswith(".png")
+    assert image.saved_path == outcome.result["output_path"]
+
+
+def test_capture_screen_crops_active_window(monkeypatch, tmp_path) -> None:
+    executor = DesktopToolExecutor()
+    window = WindowInfo(
+        handle=1001,
+        title="Project-SENA - Unity",
+        process_id=4321,
+        process_name="Unity.exe",
+    )
+    captured_bboxes: list[tuple[int, int, int, int] | None] = []
+
+    monkeypatch.setenv("PROJECT_SENA_CAPTURE_DIR", str(tmp_path))
+    monkeypatch.setattr(executor, "_get_foreground_window_info", lambda: window)
+    monkeypatch.setattr(
+        executor,
+        "_get_capturable_window_rect",
+        lambda target_window: (10, 20, 810, 620),
+    )
+
+    def fake_grab(bbox=None):
+        captured_bboxes.append(bbox)
+        return FakeImage(width=800, height=600, bbox=bbox)
+
+    monkeypatch.setattr(executor, "_grab_screen_image", fake_grab)
+
+    outcome = executor.execute("capture_screen", {"capture_mode": "active_window"})
+
+    assert captured_bboxes == [(10, 20, 810, 620)]
+    assert outcome.result["capture_mode"] == "active_window"
+    assert outcome.result["capture_rect"] == {
+        "left": 10,
+        "top": 20,
+        "right": 810,
+        "bottom": 620,
+    }
+    assert outcome.result["target_window"]["process_name"] == "Unity.exe"
+
+
+def test_capture_screen_crops_target_app_window(monkeypatch, tmp_path) -> None:
+    executor = DesktopToolExecutor()
+    window = WindowInfo(
+        handle=2002,
+        title="Untitled - Notepad",
+        process_id=8765,
+        process_name="notepad.exe",
+    )
+    captured_bboxes: list[tuple[int, int, int, int] | None] = []
+
+    monkeypatch.setenv("PROJECT_SENA_CAPTURE_DIR", str(tmp_path))
+    monkeypatch.setattr(executor, "resolve_window_target", lambda arguments: window)
+    monkeypatch.setattr(
+        executor,
+        "_get_capturable_window_rect",
+        lambda target_window: (100, 150, 700, 550),
+    )
+
+    def fake_grab(bbox=None):
+        captured_bboxes.append(bbox)
+        return FakeImage(width=600, height=400, bbox=bbox)
+
+    monkeypatch.setattr(executor, "_grab_screen_image", fake_grab)
+
+    outcome = executor.execute(
+        "capture_screen",
+        {"capture_mode": "target_window", "target_app": "notepad"},
+    )
+
+    assert captured_bboxes == [(100, 150, 700, 550)]
+    assert outcome.result["capture_mode"] == "target_window"
+    assert outcome.result["width"] == 600
+    assert outcome.result["target_window"]["window_handle"] == 2002
 
 
 def test_type_text_sends_unicode_text_to_expected_foreground_window(monkeypatch) -> None:

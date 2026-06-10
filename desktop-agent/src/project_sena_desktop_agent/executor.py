@@ -7,9 +7,11 @@ import os
 import subprocess
 import time
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 from ctypes import wintypes
+from uuid import uuid4
 
 TEST_FAILURE_APP_NAME = "__project_sena_missing_app__"
 TEST_FAILURE_ENV_VAR = "PROJECT_SENA_ENABLE_FAILURE_INJECTION"
@@ -17,6 +19,39 @@ APP_PROCESS_NAMES = {
     "notepad": "notepad.exe",
     "notepad.exe": "notepad.exe",
 }
+DWMWA_EXTENDED_FRAME_BOUNDS = 9
+
+
+def _enable_process_dpi_awareness() -> None:
+    """Keep Win32 window coordinates aligned with screenshot pixels."""
+    try:
+        user32 = ctypes.windll.user32
+        set_dpi_awareness_context = getattr(
+            user32,
+            "SetProcessDpiAwarenessContext",
+            None,
+        )
+        if set_dpi_awareness_context is not None:
+            set_dpi_awareness_context.argtypes = [wintypes.HANDLE]
+            set_dpi_awareness_context.restype = wintypes.BOOL
+            per_monitor_aware_v2 = wintypes.HANDLE(-4)
+            if set_dpi_awareness_context(per_monitor_aware_v2):
+                return
+    except Exception:
+        pass
+
+    try:
+        shcore = ctypes.windll.shcore
+        process_per_monitor_dpi_aware = 2
+        shcore.SetProcessDpiAwareness(process_per_monitor_dpi_aware)
+        return
+    except Exception:
+        pass
+
+    try:
+        ctypes.windll.user32.SetProcessDPIAware()
+    except Exception:
+        pass
 
 
 def _configure_win32_api_types() -> None:
@@ -43,8 +78,25 @@ def _configure_win32_api_types() -> None:
         wintypes.LPARAM,
     ]
     user32.SendMessageW.restype = wintypes.LPARAM
+    user32.GetWindowRect.argtypes = [
+        wintypes.HWND,
+        ctypes.POINTER(wintypes.RECT),
+    ]
+    user32.GetWindowRect.restype = wintypes.BOOL
+    user32.IsIconic.argtypes = [wintypes.HWND]
+    user32.IsIconic.restype = wintypes.BOOL
+
+    dwmapi = ctypes.windll.dwmapi
+    dwmapi.DwmGetWindowAttribute.argtypes = [
+        wintypes.HWND,
+        wintypes.DWORD,
+        ctypes.c_void_p,
+        wintypes.DWORD,
+    ]
+    dwmapi.DwmGetWindowAttribute.restype = ctypes.c_long
 
 
+_enable_process_dpi_awareness()
 _configure_win32_api_types()
 
 
@@ -211,24 +263,109 @@ class DesktopToolExecutor:
         )
 
     def _capture_screen(self, arguments: dict) -> ToolExecutionOutcome:
-        output_path = str(arguments.get("output_path", "")).strip()
-        if not output_path:
-            raise ToolExecutionError("capture_screen requires an output_path.")
+        capture_mode = _normalize_capture_mode(arguments.get("capture_mode"))
+        output_format = str(arguments.get("output_format") or "png").strip().lower()
+        if output_format != "png":
+            raise ToolExecutionError(
+                "capture_screen currently supports only png output.",
+                result={
+                    "saved": False,
+                    "reason": "unsupported_capture_format",
+                    "output_format": output_format,
+                },
+            )
 
-        from PIL import ImageGrab
+        output_file = _resolve_capture_output_path(arguments, capture_mode)
+        target_window: WindowInfo | None = None
+        capture_rect: tuple[int, int, int, int] | None = None
 
-        image = ImageGrab.grab(all_screens=True)
-        output_file = Path(output_path)
+        if capture_mode == "all_screens":
+            image = self._grab_screen_image()
+        else:
+            if capture_mode == "active_window":
+                if _has_expected_window(arguments):
+                    target_window = self.resolve_window_target(arguments)
+                else:
+                    target_window = self._get_foreground_window_info()
+                if target_window is None:
+                    raise ToolExecutionError(
+                        "No active foreground window was detected for capture.",
+                        result={
+                            "saved": False,
+                            "reason": "missing_foreground_window",
+                            "capture_mode": capture_mode,
+                        },
+                    )
+            elif capture_mode == "target_window":
+                target_window = self.resolve_window_target(arguments)
+                if target_window is None:
+                    target_app = str(arguments.get("target_app") or "").strip()
+                    reason = (
+                        "target_app_window_not_found"
+                        if target_app
+                        else "target_window_not_found"
+                    )
+                    raise ToolExecutionError(
+                        "The requested window could not be found for capture.",
+                        result={
+                            "saved": False,
+                            "reason": reason,
+                            "capture_mode": capture_mode,
+                            "target_app": target_app or None,
+                        },
+                    )
+            else:  # pragma: no cover - guarded by _normalize_capture_mode
+                raise ToolExecutionError(f"Unsupported capture mode: {capture_mode}")
+
+            self._focus_expected_window(arguments)
+            current_window = self._get_foreground_window_info()
+            if _has_expected_window(arguments) and (
+                current_window is None
+                or not self._matches_expected_window(current_window, arguments)
+            ):
+                raise ToolExecutionError(
+                    "Target window could not be focused for capture.",
+                    result={
+                        "saved": False,
+                        "reason": "target_window_not_foreground",
+                        "capture_mode": capture_mode,
+                        "expected_window": self._expected_window_result(arguments),
+                        "current_window": self._window_result(current_window)
+                        if current_window
+                        else None,
+                    },
+                )
+            if current_window is not None and self._same_window(
+                target_window,
+                current_window,
+            ):
+                target_window = current_window
+            capture_rect = self._get_capturable_window_rect(target_window)
+            image = self._grab_screen_image(bbox=capture_rect)
+
         output_file.parent.mkdir(parents=True, exist_ok=True)
         image.save(output_file)
 
-        return ToolExecutionOutcome(
-            result={
-                "saved": True,
-                "output_path": str(output_file),
-                "width": image.width,
-                "height": image.height,
+        result = {
+            "saved": True,
+            "output_path": str(output_file),
+            "width": image.width,
+            "height": image.height,
+            "capture_mode": capture_mode,
+            "output_format": output_format,
+        }
+        if capture_rect is not None:
+            result["capture_rect"] = {
+                "left": capture_rect[0],
+                "top": capture_rect[1],
+                "right": capture_rect[2],
+                "bottom": capture_rect[3],
             }
+        if target_window is not None:
+            result["target_window"] = self._window_result(target_window)
+
+        return ToolExecutionOutcome(
+            result=result
         )
 
     def _type_text(self, arguments: dict) -> ToolExecutionOutcome:
@@ -366,6 +503,82 @@ class DesktopToolExecutor:
 
         user32.EnumWindows(enum_windows_proc(callback), 0)
         return matches[0] if matches else None
+
+    def _get_capturable_window_rect(
+        self,
+        window: WindowInfo,
+    ) -> tuple[int, int, int, int]:
+        user32 = ctypes.windll.user32
+        hwnd = wintypes.HWND(window.handle)
+        if user32.IsIconic(hwnd):
+            raise ToolExecutionError(
+                "The target window is minimized and cannot be captured.",
+                result={
+                    "saved": False,
+                    "reason": "window_not_capturable",
+                    "detail": "window_minimized",
+                    "target_window": self._window_result(window),
+                },
+            )
+
+        rect = self._get_visible_window_rect(hwnd)
+        if rect is None:
+            raise ToolExecutionError(
+                "Could not read target window bounds.",
+                result={
+                    "saved": False,
+                    "reason": "window_rect_failed",
+                    "win32_error": _get_last_error(),
+                    "target_window": self._window_result(window),
+                },
+            )
+
+        left = int(rect.left)
+        top = int(rect.top)
+        right = int(rect.right)
+        bottom = int(rect.bottom)
+        if right <= left or bottom <= top:
+            raise ToolExecutionError(
+                "Target window bounds are empty.",
+                result={
+                    "saved": False,
+                    "reason": "window_not_capturable",
+                    "detail": "empty_window_rect",
+                    "target_window": self._window_result(window),
+                },
+            )
+        return (left, top, right, bottom)
+
+    @staticmethod
+    def _get_visible_window_rect(hwnd: wintypes.HWND) -> wintypes.RECT | None:
+        rect = wintypes.RECT()
+        dwm_result = ctypes.windll.dwmapi.DwmGetWindowAttribute(
+            hwnd,
+            DWMWA_EXTENDED_FRAME_BOUNDS,
+            ctypes.byref(rect),
+            ctypes.sizeof(rect),
+        )
+        if dwm_result == 0:
+            return rect
+
+        if ctypes.windll.user32.GetWindowRect(hwnd, ctypes.byref(rect)):
+            return rect
+        return None
+
+    @staticmethod
+    def _grab_screen_image(bbox: tuple[int, int, int, int] | None = None):
+        from PIL import ImageGrab
+
+        kwargs: dict[str, Any] = {"all_screens": True}
+        if bbox is not None:
+            kwargs["bbox"] = bbox
+            kwargs["include_layered_windows"] = True
+
+        try:
+            return ImageGrab.grab(**kwargs)
+        except TypeError:
+            kwargs.pop("include_layered_windows", None)
+            return ImageGrab.grab(**kwargs)
 
     @staticmethod
     def _get_window_title(hwnd: Any) -> str:
@@ -705,6 +918,55 @@ def _is_truthy_env(name: str) -> bool:
     return os.getenv(name, "").strip().lower() in {"1", "true", "yes", "on"}
 
 
+def _normalize_capture_mode(value: Any) -> str:
+    capture_mode = str(value or "all_screens").strip().lower()
+    aliases = {
+        "full_screen": "all_screens",
+        "fullscreen": "all_screens",
+        "all": "all_screens",
+        "all_screen": "all_screens",
+        "all_screens": "all_screens",
+        "screen": "all_screens",
+        "active": "active_window",
+        "active_window": "active_window",
+        "foreground": "active_window",
+        "foreground_window": "active_window",
+        "target": "target_window",
+        "target_window": "target_window",
+        "window": "target_window",
+    }
+    normalized = aliases.get(capture_mode)
+    if normalized is None:
+        raise ToolExecutionError(
+            "Unsupported capture mode.",
+            result={
+                "saved": False,
+                "reason": "unsupported_capture_mode",
+                "capture_mode": capture_mode,
+            },
+        )
+    return normalized
+
+
+def _resolve_capture_output_path(arguments: dict, capture_mode: str) -> Path:
+    output_path = str(arguments.get("output_path") or "").strip()
+    if output_path:
+        return Path(output_path)
+
+    capture_dir = str(os.getenv("PROJECT_SENA_CAPTURE_DIR") or "").strip()
+    if capture_dir:
+        base_dir = Path(capture_dir)
+    else:
+        local_app_data = os.getenv("LOCALAPPDATA")
+        if local_app_data:
+            base_dir = Path(local_app_data) / "ProjectSENA" / "captures"
+        else:
+            base_dir = Path.home() / ".project-sena" / "captures"
+
+    timestamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
+    return base_dir / f"capture_{timestamp}_{capture_mode}_{uuid4().hex[:8]}.png"
+
+
 def kernel32_get_current_thread_id() -> int:
     return int(ctypes.windll.kernel32.GetCurrentThreadId())
 
@@ -761,6 +1023,13 @@ def _optional_int(value: Any) -> int | None:
         return int(value)
     except (TypeError, ValueError):
         return None
+
+
+def _has_expected_window(arguments: dict) -> bool:
+    return (
+        _optional_int(arguments.get("expected_window_handle")) is not None
+        or _optional_int(arguments.get("expected_process_id")) is not None
+    )
 
 
 def _normalize_text_for_clipboard(text: str) -> str:

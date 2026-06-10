@@ -22,7 +22,7 @@ The initial real tool implementations are:
 - `open_app`
 - `get_active_window`
 
-`capture_screen` and `type_text` are wired into the executor interface, but their runtime support remains dependency-driven and should be treated as early integration hooks for now.
+`capture_screen` saves visible desktop screenshots as PNG files. `type_text` uses a user-confirmed target window and clipboard paste flow for text entry.
 
 ## Local Test Loop
 

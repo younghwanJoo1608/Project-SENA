@@ -42,3 +42,11 @@ def test_type_text_always_requests_approval() -> None:
     decision = engine.evaluate(build_request("type_text", "auto_allowed"))
 
     assert decision.action == "request_approval"
+
+
+def test_capture_screen_always_requests_approval() -> None:
+    engine = PolicyEngine()
+
+    decision = engine.evaluate(build_request("capture_screen", "auto_allowed"))
+
+    assert decision.action == "request_approval"

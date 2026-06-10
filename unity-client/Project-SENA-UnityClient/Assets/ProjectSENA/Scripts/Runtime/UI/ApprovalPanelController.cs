@@ -123,7 +123,7 @@ namespace ProjectSENA.UI
             {
                 "open_app" => BuildOpenAppPrompt(payload),
                 "get_active_window" => "현재 활성 창 정보를 확인할게.",
-                "capture_screen" => "화면을 캡처할게.",
+                "capture_screen" => BuildCaptureScreenPrompt(payload),
                 "type_text" => BuildTypeTextPrompt(payload),
                 _ => payload.prompt
             };
@@ -152,6 +152,39 @@ namespace ProjectSENA.UI
             }
 
             return "앱을 실행할까?";
+        }
+
+        private static string BuildCaptureScreenPrompt(ApprovalRequestPayload payload)
+        {
+            string captureMode = GetArgumentString(payload, "capture_mode");
+            string title = GetArgumentString(payload, "expected_window_title");
+            string processName = GetArgumentString(payload, "expected_process_name");
+            string modeLabel = captureMode switch
+            {
+                "active_window" => "현재 활성 창",
+                "target_window" => "대상 창",
+                "all_screens" => "전체 화면",
+                "full_screen" => "전체 화면",
+                _ => "화면"
+            };
+
+            string target = string.Empty;
+            if (!string.IsNullOrEmpty(title))
+            {
+                target = title;
+                if (!string.IsNullOrEmpty(processName))
+                {
+                    target = $"{title} ({processName})";
+                }
+            }
+
+            if (string.IsNullOrEmpty(target))
+            {
+                return $"{modeLabel}을 PNG 파일로 저장할까?";
+            }
+
+            return $"{modeLabel}을 PNG 파일로 저장할까?"
+                + $"\n\n대상 창: {target}";
         }
 
         private static string BuildTypeTextPrompt(ApprovalRequestPayload payload)

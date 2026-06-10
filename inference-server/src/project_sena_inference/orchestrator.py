@@ -391,6 +391,17 @@ class Orchestrator:
                 approval_policy="user_confirmation",
             )
 
+        capture_screen_request = _extract_capture_screen_request(user_text, lowered)
+        if capture_screen_request:
+            return make_tool_request(
+                session_id=session.session_id,
+                tool_name="capture_screen",
+                arguments=capture_screen_request,
+                reason="The user asked to capture the desktop screen.",
+                risk_level="medium",
+                approval_policy="user_confirmation",
+            )
+
         type_text_request = _extract_type_text_request(user_text, lowered)
         if type_text_request:
             arguments = {"text": type_text_request["text"]}
@@ -606,6 +617,43 @@ def _tool_display_name(tool_name: str) -> str:
         "capture_screen": "\ud654\uba74 \ucea1\ucc98",
         "type_text": "\ud14d\uc2a4\ud2b8 \uc785\ub825",
     }.get(tool_name, tool_name)
+
+
+def _extract_capture_screen_request(user_text: str, lowered: str) -> dict[str, str] | None:
+    capture_requested = (
+        "\ucea1\ucc98" in user_text
+        or "\ucea1\uccd0" in user_text
+        or "\uc2a4\ud06c\ub9b0\uc0f7" in user_text
+        or "capture" in lowered
+        or "screenshot" in lowered
+    )
+    if not capture_requested:
+        return None
+
+    arguments = {
+        "capture_mode": "all_screens",
+        "output_format": "png",
+    }
+    if (
+        "\ud604\uc7ac \ucc3d" in user_text
+        or "\ud65c\uc131 \ucc3d" in user_text
+        or "active window" in lowered
+        or "foreground window" in lowered
+    ):
+        arguments["capture_mode"] = "active_window"
+    elif "\uba54\ubaa8\uc7a5" in user_text or "notepad" in lowered:
+        arguments["capture_mode"] = "target_window"
+        arguments["target_app"] = "notepad"
+    elif (
+        "\uc804\uccb4 \ud654\uba74" in user_text
+        or "\uc804\uccb4" in user_text
+        or "full screen" in lowered
+        or "all screens" in lowered
+        or "entire screen" in lowered
+    ):
+        arguments["capture_mode"] = "all_screens"
+
+    return arguments
 
 
 def _extract_type_text_request(user_text: str, lowered: str) -> dict[str, str] | None:
