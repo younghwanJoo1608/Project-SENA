@@ -3,6 +3,10 @@
 Project-SENA의 Phase 1은 "Unity client -> inference-server -> desktop-agent -> 승인 -> 실행 -> 결과 반영"의 최소 제어 루프를 닫는 단계였다.  
 Phase 1.5의 목표는 이 제어 루프를 더 예쁘게 만드는 것이 아니라, **실제로 계속 켜두고 써도 되는 수준의 안정성, 복구성, 확장 준비도**를 확보하는 것이다.
 
+상태: 완료
+완료일: 2026-06-11
+완료 기록: `docs/phase-1.5-completion-report.kr.md`
+
 즉 이번 단계에서는 Live2D나 음성보다 먼저, 아래 질문에 답할 수 있어야 한다.
 
 - 앱을 몇 번 반복해서 써도 흐름이 안정적인가?
@@ -94,6 +98,13 @@ Unity Editor 안에서의 성공과 standalone 실행 성공은 다르다.
 - 위 실패 상황 각각에서 앱이 멈추지 않는다
 - 사용자가 "무슨 일이 났는지"와 "다음에 뭘 하면 되는지"를 알 수 있다
 
+### 검증 기록
+
+- 2026-06-06: inference-server 미기동 시 Unity가 한국어 안내를 표시하고 입력 가능 상태로 복구됨을 확인.
+- 2026-06-06: desktop-agent 미기동 시 inference-server 연결은 유지하면서 desktop-agent 연결 실패만 분리 표시함을 확인.
+- 2026-06-06: 승인 거절 시 툴이 실행되지 않고 idle 상태로 복구됨을 확인.
+- 2026-06-06: 테스트 전용 failure injection으로 tool 실행 실패 UX를 검증함. 테스트 경로는 `PROJECT_SENA_ENABLE_FAILURE_INJECTION=1`일 때만 활성화된다.
+
 ## 3. 세션/상태 운영성
 
 지금은 세션이 살아 있고 단일 사용자 흐름이 유지되는 한 문제없지만, 실사용성 측면에서는 최소한의 세션 운영 규칙이 필요하다.
@@ -104,17 +115,31 @@ Unity Editor 안에서의 성공과 standalone 실행 성공은 다르다.
 - 세션 ID 재생성 시점 정리
 - 승인 대기 중 입력 가능 여부 정책 고정
 - 상태값(`idle`, `thinking`, `awaiting_approval`)의 UI 표현 정리
+- 같은 `message_id` 재전송 시 중복 tool dispatch가 발생하지 않도록 방어
+- 이미 pending approval이 있는 session에서 새 tool 요청이 겹치지 않도록 방어
+- 이미 처리된 approval 결과가 다시 들어왔을 때 stale 응답으로 정리
 
 ### 권장 방향
 
 - "새 대화" 버튼 하나 추가
 - 대화 리셋 시 채팅 로그와 세션 ID를 동시에 초기화
 - 승인 대기 중에는 입력창과 보내기 버튼을 비활성화 유지
+- 세션 ID 영구 저장은 pending approval 복구 정책과 함께 다룬다. 단순히 Unity `PlayerPrefs`에 저장하면 앱 재시작 후 이전 pending 상태와 충돌할 수 있으므로, 먼저 "새 대화"와 "대기 작업 폐기" UX를 정한다.
 
 ### 완료 기준
 
 - 사용자가 여러 턴을 주고받다가도 대화를 명시적으로 초기화할 수 있다
 - 상태 전이가 UI 상에서 일관되게 보인다
+- 네트워크 재시도나 중복 클릭으로 같은 tool이 두 번 실행되지 않는다
+
+### 진행 기록
+
+- 2026-06-06: inference-server에 session별 `message_id` 응답 캐시를 추가해 같은 inbound message 재전송 시 이전 응답을 반환하도록 함.
+- 2026-06-06: inference-server가 pending approval 중 새 user_text/tool planning을 막고 먼저 승인/거절을 요구하도록 함.
+- 2026-06-06: inference-server가 pending approval이 없는 approval_result를 stale approval로 처리하고 desktop-agent로 내려보내지 않도록 함.
+- 2026-06-06: desktop-agent도 `message_id` 응답 캐시와 session별 pending tool 중복 방어를 추가함.
+- 2026-06-06: Unity Hierarchy에 정적 "새 대화" 버튼을 추가함. 버튼은 새 session_id를 만들고 채팅 로그, 승인 패널, 입력창 상태를 초기화한다.
+- 2026-06-06: pending approval 중 "새 대화"를 누르면 이전 session_id로 `approval_result(approved=false)`를 보내 서버/desktop-agent의 pending tool을 취소하도록 함.
 
 ## 4. Desktop tool 확장 검증
 
@@ -144,6 +169,13 @@ Phase 1.5에서는 최소 1~2개의 tool을 더 붙여서 구조가 일반화되
 ### 완료 기준
 
 - `open_app` 외 1개 이상 tool이 같은 승인/실행/결과 루프로 동작한다
+
+### 진행 기록
+
+- 2026-06-07: `get_active_window`를 observation-only `auto_allowed` tool로 검증함. desktop-agent는 foreground window title, handle, process id/name/path를 반환하고, inference-server와 Unity가 approval 없이 결과를 표시한다.
+- 2026-06-07: `type_text` foreground 기반 1차 구현을 추가함. desktop-agent는 approval request 생성 시 foreground window를 기록하고, 승인 후 window가 바뀌었으면 입력하지 않도록 한다. inference-server는 `입력해줘`, `써줘`, `type ...` 요청을 `type_text`로 planning한다.
+- 2026-06-09: `type_text`가 `target_app: notepad`를 통해 이미 열려 있는 메모장 창을 찾아 입력할 수 있도록 확장함. 명시 대상이 있으면 마지막 `open_app` 대상이나 Unity foreground보다 우선한다.
+- 2026-06-09: `capture_screen`을 파일 저장 기반 visible capture로 확장함. `all_screens`, `active_window`, `target_window` 모드를 지원하고, 캡처 파일은 기본적으로 로컬 Project-SENA capture directory에 PNG로 저장한다.
 
 ## 5. 다음 Phase를 위한 구조 정리
 
@@ -201,6 +233,9 @@ Phase 1.5는 아래가 되면 완료로 본다.
 - 세션 초기화와 상태 표시가 일관된다
 - `open_app` 외 최소 1개 tool이 추가로 검증된다
 - 다음 Phase의 캐릭터/음성/화면 인식 확장을 막는 큰 구조 문제가 없다
+
+통합 회귀 테스트 절차는 `docs/phase-1.5-regression-checklist.kr.md`를 기준으로 한다.
+캡처 파일 보관과 자동 정리 기준은 `docs/capture-retention-policy.kr.md`를 기준으로 한다.
 
 ## 다음 Phase 연결
 

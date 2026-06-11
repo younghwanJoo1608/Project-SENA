@@ -65,6 +65,8 @@ local-assets/
 [Ll]ogs/
 [Uu]ser[Ss]ettings/
 [Mm]emoryCaptures/
+[Aa]ssets/_Recovery/
+[Aa]ssets/_Recovery.meta
 *.csproj
 *.sln
 *.user

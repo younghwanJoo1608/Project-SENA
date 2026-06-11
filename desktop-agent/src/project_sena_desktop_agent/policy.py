@@ -34,10 +34,10 @@ class PolicyEngine:
         if approval_policy == "blocked":
             return PolicyDecision("deny", "The request is blocked by server policy.")
 
-        if tool_name == "type_text":
+        if tool_name in {"capture_screen", "type_text"}:
             return PolicyDecision(
                 "request_approval",
-                "Typing text mutates desktop state and requires confirmation.",
+                "The request may affect desktop privacy or state and requires confirmation.",
             )
 
         if approval_policy == "user_confirmation":

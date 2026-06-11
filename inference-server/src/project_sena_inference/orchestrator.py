@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from typing import cast
 
 from project_sena_inference.adapters.desktop_agent import (
@@ -56,7 +57,16 @@ TOOL_SUCCESS_MESSAGE = (
 TOOL_DENIED_MESSAGE = (
     "{tool} \uc791\uc5c5\uc740 \uc2e4\ud589\ub418\uc9c0 \uc54a\uc558\uc5b4."
 )
+PENDING_APPROVAL_MESSAGE = (
+    "\uc544\uc9c1 \ud655\uc778\uc744 \uae30\ub2e4\ub9ac\ub294 \uc791\uc5c5\uc774 \uc788\uc5b4. "
+    "\uba3c\uc800 \uc2b9\uc778 \ucc3d\uc5d0\uc11c \ud5c8\uc6a9\ud558\uac70\ub098 \uac70\uc808\ud574\uc918."
+)
+PENDING_TOOL_MESSAGE = (
+    "\uc774\ubbf8 \uc2e4\ud589 \uc911\uc778 \uc791\uc5c5\uc774 \uc788\uc5b4. "
+    "\uacb0\uacfc\uac00 \ub3cc\uc544\uc628 \ub4a4\uc5d0 \ub2e4\uc74c \uc694\uccad\uc744 \ubc1b\uc744\uac8c."
+)
 TEST_FAILURE_APP_NAME = "__project_sena_missing_app__"
+SELF_DESCRIBING_SUCCESS_TOOLS = {"get_active_window"}
 
 
 class Orchestrator:
@@ -78,34 +88,44 @@ class Orchestrator:
 
     def handle(self, message: InboundMessage) -> list[OutboundMessage]:
         session = self._session_store.get_or_create(message.session_id)
+        cached_response = session.get_cached_response(message.message_id)
+        if cached_response is not None:
+            return cached_response
+
         session.turn_count += 1
 
         if isinstance(message, UserTextMessage):
-            return self._handle_user_text(session, message)
-        if isinstance(message, SpeechInputMessage):
-            return self._handle_speech_input(session, message)
-        if isinstance(message, ScreenFrameMessage):
-            return self._handle_screen_frame(session, message)
-        if isinstance(message, ApprovalResultMessage):
-            return self._handle_approval_result(session, message)
-        if isinstance(message, ToolResultMessage):
-            return self._handle_tool_result(session, message)
-        return [
-            cast(
-                OutboundMessage,
-                make_error(
-                    message.session_id,
-                    "unsupported_message",
-                    "Unsupported message type.",
-                ),
-            )
-        ]
+            response = self._handle_user_text(session, message)
+        elif isinstance(message, SpeechInputMessage):
+            response = self._handle_speech_input(session, message)
+        elif isinstance(message, ScreenFrameMessage):
+            response = self._handle_screen_frame(session, message)
+        elif isinstance(message, ApprovalResultMessage):
+            response = self._handle_approval_result(session, message)
+        elif isinstance(message, ToolResultMessage):
+            response = self._handle_tool_result(session, message)
+        else:
+            response = [
+                cast(
+                    OutboundMessage,
+                    make_error(
+                        message.session_id,
+                        "unsupported_message",
+                        "Unsupported message type.",
+                    ),
+                )
+            ]
+        session.remember_response(message.message_id, response)
+        return response
 
     def _handle_user_text(
         self,
         session: SessionState,
         message: UserTextMessage,
     ) -> list[OutboundMessage]:
+        if session.pending_tool_name is not None:
+            return self._handle_user_text_during_pending_tool(session)
+
         user_text = message.payload.text.strip()
         session.recent_user_texts.append(user_text)
         outbound: list[OutboundMessage] = [
@@ -116,9 +136,8 @@ class Orchestrator:
             )
         ]
 
-        tool_request = self._maybe_plan_tool_request(session.session_id, user_text)
+        tool_request = self._maybe_plan_tool_request(session, user_text)
         if tool_request is not None:
-            session.pending_tool_name = tool_request.payload.tool_name
             if self._desktop_agent_client is None:
                 if tool_request.payload.approval_policy == "auto_allowed":
                     assistant_text = AUTO_TOOL_MESSAGE
@@ -129,6 +148,11 @@ class Orchestrator:
                     next_state = "awaiting_approval"
                     next_detail = "Waiting for user approval."
 
+                session.start_pending_tool(
+                    tool_request.payload.tool_name,
+                    tool_request.message_id,
+                    next_state,
+                )
                 outbound.append(
                     make_assistant_text(
                         session.session_id,
@@ -246,6 +270,21 @@ class Orchestrator:
         session: SessionState,
         message: ApprovalResultMessage,
     ) -> list[OutboundMessage]:
+        if session.pending_tool_name is None:
+            return [
+                make_error(
+                    session.session_id,
+                    "stale_approval_result",
+                    "No pending approval exists for this session.",
+                    retryable=False,
+                ),
+                make_assistant_state(
+                    session.session_id,
+                    "idle",
+                    "No pending approval exists.",
+                ),
+            ]
+
         if self._desktop_agent_client is not None:
             return self._dispatch_approval_result(session, message)
 
@@ -265,7 +304,7 @@ class Orchestrator:
                 ),
             ]
 
-        session.pending_tool_name = None
+        session.clear_pending_tool()
         return [
             make_assistant_text(
                 session.session_id,
@@ -285,8 +324,18 @@ class Orchestrator:
         session: SessionState,
         message: ToolResultMessage,
     ) -> list[OutboundMessage]:
-        session.pending_tool_name = None
+        self._update_desktop_target_from_tool_result(session, message)
+        session.clear_pending_tool()
         if message.payload.status == "success":
+            if message.payload.tool_name in SELF_DESCRIBING_SUCCESS_TOOLS:
+                return [
+                    make_assistant_state(
+                        session.session_id,
+                        "idle",
+                        "Observation completed.",
+                    )
+                ]
+
             return [
                 make_assistant_text(
                     session.session_id,
@@ -326,7 +375,7 @@ class Orchestrator:
             ),
         ]
 
-    def _maybe_plan_tool_request(self, session_id: str, user_text: str):
+    def _maybe_plan_tool_request(self, session: SessionState, user_text: str):
         lowered = user_text.lower()
         if self._failure_injection_enabled and (
             "failure test" in lowered
@@ -334,7 +383,7 @@ class Orchestrator:
             or "\uc2e4\ud328 \ud14c\uc2a4\ud2b8" in user_text
         ):
             return make_tool_request(
-                session_id=session_id,
+                session_id=session.session_id,
                 tool_name="open_app",
                 arguments={"app_name": TEST_FAILURE_APP_NAME},
                 reason="Project-SENA failure injection test requested.",
@@ -342,9 +391,38 @@ class Orchestrator:
                 approval_policy="user_confirmation",
             )
 
+        capture_screen_request = _extract_capture_screen_request(user_text, lowered)
+        if capture_screen_request:
+            return make_tool_request(
+                session_id=session.session_id,
+                tool_name="capture_screen",
+                arguments=capture_screen_request,
+                reason="The user asked to capture the desktop screen.",
+                risk_level="medium",
+                approval_policy="user_confirmation",
+            )
+
+        type_text_request = _extract_type_text_request(user_text, lowered)
+        if type_text_request:
+            arguments = {"text": type_text_request["text"]}
+            target_app = type_text_request.get("target_app")
+            if target_app:
+                arguments["target_app"] = target_app
+            elif session.latest_desktop_target:
+                arguments.update(session.latest_desktop_target)
+
+            return make_tool_request(
+                session_id=session.session_id,
+                tool_name="type_text",
+                arguments=arguments,
+                reason="The user asked to type text into the active foreground window.",
+                risk_level="medium",
+                approval_policy="user_confirmation",
+            )
+
         if "\uba54\ubaa8\uc7a5" in user_text or "notepad" in lowered:
             return make_tool_request(
-                session_id=session_id,
+                session_id=session.session_id,
                 tool_name="open_app",
                 arguments={"app_name": "notepad"},
                 reason="The user asked to open a plain text editor.",
@@ -353,7 +431,7 @@ class Orchestrator:
             )
         if "\ud604\uc7ac \ucc3d" in user_text or "active window" in lowered:
             return make_tool_request(
-                session_id=session_id,
+                session_id=session.session_id,
                 tool_name="get_active_window",
                 arguments={},
                 reason="The user asked for current active window context.",
@@ -367,9 +445,15 @@ class Orchestrator:
         session: SessionState,
         tool_request,
     ) -> list[OutboundMessage]:
+        session.start_pending_tool(
+            tool_request.payload.tool_name,
+            tool_request.message_id,
+            "dispatching",
+        )
         try:
             response = self._desktop_agent_client.dispatch(tool_request)
         except DesktopAgentClientError as exc:
+            session.clear_pending_tool()
             return [
                 make_error(
                     session.session_id,
@@ -385,6 +469,7 @@ class Orchestrator:
             ]
 
         if isinstance(response, ApprovalRequestMessage):
+            session.pending_tool_state = "awaiting_approval"
             return [
                 make_assistant_text(
                     session.session_id,
@@ -403,6 +488,7 @@ class Orchestrator:
         if isinstance(response, ToolResultMessage):
             return [response, *self._handle_tool_result(session, response)]
 
+        session.clear_pending_tool()
         return [
             cast(OutboundMessage, response),
             make_assistant_state(
@@ -420,6 +506,7 @@ class Orchestrator:
         try:
             response = self._desktop_agent_client.dispatch(approval_result)
         except DesktopAgentClientError as exc:
+            session.clear_pending_tool()
             return [
                 make_error(
                     session.session_id,
@@ -438,6 +525,7 @@ class Orchestrator:
             return [response, *self._handle_tool_result(session, response)]
 
         if isinstance(response, ErrorMessage):
+            session.clear_pending_tool()
             return [
                 cast(OutboundMessage, response),
                 make_assistant_state(
@@ -464,6 +552,63 @@ class Orchestrator:
             ),
         ]
 
+    def _handle_user_text_during_pending_tool(
+        self,
+        session: SessionState,
+    ) -> list[OutboundMessage]:
+        if session.pending_tool_state == "awaiting_approval":
+            return [
+                make_assistant_text(
+                    session.session_id,
+                    PENDING_APPROVAL_MESSAGE,
+                    persona_state="focused",
+                    should_speak=True,
+                ),
+                make_assistant_state(
+                    session.session_id,
+                    "awaiting_approval",
+                    "Waiting for user approval.",
+                ),
+            ]
+
+        return [
+            make_assistant_text(
+                session.session_id,
+                PENDING_TOOL_MESSAGE,
+                persona_state="focused",
+                should_speak=True,
+            ),
+            make_assistant_state(
+                session.session_id,
+                "tool_running",
+                "Waiting for desktop tool execution.",
+            ),
+        ]
+
+    @staticmethod
+    def _update_desktop_target_from_tool_result(
+        session: SessionState,
+        message: ToolResultMessage,
+    ) -> None:
+        if (
+            message.payload.status != "success"
+            or message.payload.tool_name != "open_app"
+        ):
+            return
+
+        result = message.payload.result
+        window_handle = result.get("window_handle")
+        if not window_handle:
+            return
+
+        session.latest_desktop_target = {
+            "expected_window_title": result.get("window_title"),
+            "expected_window_handle": window_handle,
+            "expected_process_id": result.get("process_id") or result.get("pid"),
+            "expected_process_name": result.get("process_name"),
+            "expected_executable_path": result.get("executable_path"),
+        }
+
 
 def _tool_display_name(tool_name: str) -> str:
     return {
@@ -472,3 +617,93 @@ def _tool_display_name(tool_name: str) -> str:
         "capture_screen": "\ud654\uba74 \ucea1\ucc98",
         "type_text": "\ud14d\uc2a4\ud2b8 \uc785\ub825",
     }.get(tool_name, tool_name)
+
+
+def _extract_capture_screen_request(user_text: str, lowered: str) -> dict[str, str] | None:
+    capture_requested = (
+        "\ucea1\ucc98" in user_text
+        or "\ucea1\uccd0" in user_text
+        or "\uc2a4\ud06c\ub9b0\uc0f7" in user_text
+        or "capture" in lowered
+        or "screenshot" in lowered
+    )
+    if not capture_requested:
+        return None
+
+    arguments = {
+        "capture_mode": "all_screens",
+        "output_format": "png",
+    }
+    if (
+        "\ud604\uc7ac \ucc3d" in user_text
+        or "\ud65c\uc131 \ucc3d" in user_text
+        or "active window" in lowered
+        or "foreground window" in lowered
+    ):
+        arguments["capture_mode"] = "active_window"
+    elif "\uba54\ubaa8\uc7a5" in user_text or "notepad" in lowered:
+        arguments["capture_mode"] = "target_window"
+        arguments["target_app"] = "notepad"
+    elif (
+        "\uc804\uccb4 \ud654\uba74" in user_text
+        or "\uc804\uccb4" in user_text
+        or "full screen" in lowered
+        or "all screens" in lowered
+        or "entire screen" in lowered
+    ):
+        arguments["capture_mode"] = "all_screens"
+
+    return arguments
+
+
+def _extract_type_text_request(user_text: str, lowered: str) -> dict[str, str] | None:
+    if lowered.startswith("type "):
+        return _clean_type_text_candidate(user_text[5:])
+    if lowered.startswith("enter "):
+        return _clean_type_text_candidate(user_text[6:])
+
+    quoted_match = re.search(
+        r"[\u0022\u0027\u201c\u201d\u2018\u2019](.+?)[\u0022\u0027\u201c\u201d\u2018\u2019]"
+        r"\s*(?:\ub77c\uace0\s*)?(?:\uc785\ub825|\uc368)",
+        user_text,
+    )
+    if quoted_match:
+        request = _clean_type_text_candidate(quoted_match.group(1))
+        if request and "\uba54\ubaa8\uc7a5" in user_text:
+            request["target_app"] = "notepad"
+        return request
+
+    for marker in ("\uc785\ub825", "\uc368"):
+        marker_index = user_text.find(marker)
+        if marker_index > 0:
+            return _clean_type_text_candidate(user_text[:marker_index])
+
+    return None
+
+
+def _clean_type_text_candidate(candidate: str) -> dict[str, str] | None:
+    text = candidate.strip()
+    target_app: str | None = None
+    for prefix, prefix_target_app in (
+        ("\ud604\uc7ac \ucc3d\uc5d0 ", None),
+        ("\uc5ec\uae30\uc5d0 ", None),
+        ("\uc5f4\ub824 \uc788\ub294 \uba54\ubaa8\uc7a5\uc5d0 ", "notepad"),
+        ("\uba54\ubaa8\uc7a5\uc5d0 ", "notepad"),
+        ("notepad에 ", "notepad"),
+        ("notepad ", "notepad"),
+    ):
+        if text.startswith(prefix):
+            text = text[len(prefix) :].strip()
+            target_app = prefix_target_app
+            break
+
+    if text.endswith("\ub77c\uace0"):
+        text = text[: -len("\ub77c\uace0")].strip()
+
+    if not text:
+        return None
+
+    request = {"text": text}
+    if target_app:
+        request["target_app"] = target_app
+    return request

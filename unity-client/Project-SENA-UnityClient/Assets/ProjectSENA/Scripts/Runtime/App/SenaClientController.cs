@@ -1,4 +1,5 @@
 using System.Collections;
+using System.Runtime.InteropServices;
 using ProjectSENA.Networking;
 using ProjectSENA.Protocol;
 using ProjectSENA.UI;
@@ -12,6 +13,8 @@ namespace ProjectSENA.App
 {
     public sealed class SenaClientController : MonoBehaviour
     {
+        private const int AllowSetForegroundWindowAnyProcess = -1;
+
         [Header("Server")]
         [SerializeField] private string inferenceServerBaseUrl = "http://127.0.0.1:8000";
         [SerializeField] private string languageCode = "ko";
@@ -19,7 +22,9 @@ namespace ProjectSENA.App
         [Header("Chat UI")]
         [SerializeField] private TMP_InputField tmpInputField;
         [SerializeField] private Button sendButton;
+        [SerializeField] private Button newSessionButton;
         [SerializeField] private Text sendButtonText;
+        [SerializeField] private Text newSessionButtonText;
         [SerializeField] private TMP_Text sendButtonTmpText;
         [SerializeField] private TMP_Text inputPlaceholderTmpText;
         [SerializeField] private RectTransform composerPanelRect;
@@ -57,7 +62,7 @@ namespace ProjectSENA.App
 
         private void Awake()
         {
-            _sessionId = $"unity-session-{System.Guid.NewGuid():N}";
+            _sessionId = CreateSessionId();
             _apiClient = new SenaApiClient(inferenceServerBaseUrl);
 
             if (sendButton != null)
@@ -65,9 +70,19 @@ namespace ProjectSENA.App
                 sendButton.onClick.AddListener(SendCurrentInput);
             }
 
+            if (newSessionButton != null)
+            {
+                newSessionButton.onClick.AddListener(StartNewSession);
+            }
+
             if (sendButtonText == null && sendButton != null)
             {
                 sendButtonText = sendButton.GetComponentInChildren<Text>();
+            }
+
+            if (newSessionButtonText == null && newSessionButton != null)
+            {
+                newSessionButtonText = newSessionButton.GetComponentInChildren<Text>();
             }
 
             if (sendButtonTmpText == null && sendButton != null)
@@ -122,6 +137,11 @@ namespace ProjectSENA.App
             if (sendButton != null)
             {
                 sendButton.onClick.RemoveListener(SendCurrentInput);
+            }
+
+            if (newSessionButton != null)
+            {
+                newSessionButton.onClick.RemoveListener(StartNewSession);
             }
 
             if (tmpInputField != null)
@@ -243,6 +263,60 @@ namespace ProjectSENA.App
             }
 
             SubmitText(NormalizeSubmittedText(tmpInputField.text));
+        }
+
+        public void StartNewSession()
+        {
+            if (_requestInFlight)
+            {
+                chatPanel?.AppendSystemMessage("\uC694\uCCAD\uC744 \uCC98\uB9AC\uD558\uB294 \uC911\uC774\uC57C. \uC751\uB2F5\uC774 \uB3CC\uC544\uC628 \uB4A4 \uC0C8 \uB300\uD654\uB97C \uC2DC\uC791\uD560 \uC218 \uC788\uC5B4.");
+                return;
+            }
+
+            bool closedPendingApproval = _approvalPending;
+            string previousSessionId = _sessionId;
+            if (closedPendingApproval)
+            {
+                StartCoroutine(CancelPendingApprovalForSession(previousSessionId));
+            }
+
+            _sessionId = CreateSessionId();
+            _approvalPending = false;
+            _submitDeferredUntilCompositionEnds = false;
+            _submitFromEnterPending = false;
+            _inputHeightRefreshPending = false;
+
+            approvalPanel?.Hide();
+            chatPanel?.Clear();
+            chatPanel?.AppendSystemMessage(
+                closedPendingApproval
+                    ? "\uC0C8 \uB300\uD654\uB97C \uC2DC\uC791\uD558\uBA74\uC11C \uC774\uC804 \uC571 \uC2E4\uD589 \uC694\uCCAD\uC744 \uCDE8\uC18C\uD588\uC5B4."
+                    : "\uC0C8 \uB300\uD654\uB97C \uC2DC\uC791\uD588\uC5B4.");
+
+            ClearCurrentInputText();
+            UpdateInputFieldHeight();
+            UpdateConnectionStatus(true);
+            UpdateAssistantState("idle", "Waiting for input.");
+            UpdateSendInteractivity();
+            _reactivateInputNextFrame = true;
+        }
+
+        private IEnumerator CancelPendingApprovalForSession(string sessionId)
+        {
+            if (_apiClient == null || string.IsNullOrEmpty(sessionId))
+            {
+                yield break;
+            }
+
+            SenaEnvelope cancellation = SenaRequestFactory.CreateApprovalResult(
+                sessionId,
+                false,
+                "Unity UI\uC5D0\uC11C \uC0C8 \uB300\uD654\uB97C \uC2DC\uC791\uD574\uC11C \uC774\uC804 \uC2B9\uC778 \uC694\uCCAD\uC744 \uCDE8\uC18C\uD588\uC5B4.");
+
+            yield return _apiClient.PostMessage(
+                cancellation,
+                _ => { },
+                error => Debug.LogWarning($"Project-SENA approval cancellation failed: {error}"));
         }
 
         private void HandleInputFieldValueChanged(string _)
@@ -367,7 +441,16 @@ namespace ProjectSENA.App
                     case "tool_result":
                     {
                         ToolResultPayload payload = message.ToPayload<ToolResultPayload>();
-                        chatPanel?.AppendSystemMessage(FormatToolResult(payload));
+                        string toolResultText = FormatToolResult(payload);
+                        if (ShouldDisplayToolResultAsAssistant(payload))
+                        {
+                            chatPanel?.AppendAssistantMessage(toolResultText);
+                        }
+                        else
+                        {
+                            chatPanel?.AppendSystemMessage(toolResultText);
+                        }
+
                         _approvalPending = false;
                         UpdateSendInteractivity();
                         break;
@@ -398,6 +481,11 @@ namespace ProjectSENA.App
                 ? "Unity UI\uC5D0\uC11C \uD5C8\uC6A9\uD588\uC5B4."
                 : "Unity UI\uC5D0\uC11C \uAC70\uC808\uD588\uC5B4.";
 
+            if (approved)
+            {
+                AllowDesktopAgentForegroundActivation();
+            }
+
             _approvalPending = false;
             UpdateSendInteractivity();
 
@@ -406,6 +494,13 @@ namespace ProjectSENA.App
                 approved,
                 decisionReason);
             StartCoroutine(PostEnvelope(request));
+        }
+
+        private static void AllowDesktopAgentForegroundActivation()
+        {
+#if UNITY_STANDALONE_WIN || UNITY_EDITOR_WIN
+            AllowSetForegroundWindow(AllowSetForegroundWindowAnyProcess);
+#endif
         }
 
         private void RecoverFromFailedExchange(string userMessage, string technicalDetail)
@@ -503,6 +598,16 @@ namespace ProjectSENA.App
                     : "\uB370\uC2A4\uD06C\uD1B1 \uC791\uC5C5 \uC2E4\uD589 \uC911 \uC624\uB958\uAC00 \uBC1C\uC0DD\uD588\uC5B4.";
             }
 
+            if (payload.code == "pending_tool_exists")
+            {
+                return "\uC774\uBBF8 \uD655\uC778\uC744 \uAE30\uB2E4\uB9AC\uB294 \uC791\uC5C5\uC774 \uC788\uC5B4. \uBA3C\uC800 \uC2B9\uC778 \uCC3D\uC5D0\uC11C \uD5C8\uC6A9\uD558\uAC70\uB098 \uAC70\uC808\uD574\uC918.";
+            }
+
+            if (payload.code == "stale_approval_result")
+            {
+                return "\uC774\uBBF8 \uCC98\uB9AC\uB41C \uC2B9\uC778 \uC751\uB2F5\uC774\uC57C. \uD544\uC694\uD558\uBA74 \uC694\uCCAD\uC744 \uB2E4\uC2DC \uBCF4\uB0B4\uC918.";
+            }
+
             string message = string.IsNullOrEmpty(payload.message)
                 ? "\uC11C\uBC84\uC5D0\uC11C \uC624\uB958\uAC00 \uB3CC\uC544\uC654\uC5B4."
                 : payload.message;
@@ -585,6 +690,11 @@ namespace ProjectSENA.App
             if (inputPlaceholderTmpText != null)
             {
                 inputPlaceholderTmpText.text = "\uBA54\uC2DC\uC9C0\uB97C \uC785\uB825\uD574 \uC918";
+            }
+
+            if (newSessionButtonText != null)
+            {
+                newSessionButtonText.text = "\uC0C8 \uB300\uD654";
             }
         }
 
@@ -679,6 +789,11 @@ namespace ProjectSENA.App
             {
                 tmpInputField.interactable = canSend;
             }
+
+            if (newSessionButton != null)
+            {
+                newSessionButton.interactable = !_requestInFlight;
+            }
         }
 
         private void ActivateCurrentInputField()
@@ -760,6 +875,16 @@ namespace ProjectSENA.App
             return input != null && !string.IsNullOrEmpty(input.compositionString);
         }
 
+        private static string CreateSessionId()
+        {
+            return $"unity-session-{System.Guid.NewGuid():N}";
+        }
+
+#if UNITY_STANDALONE_WIN || UNITY_EDITOR_WIN
+        [DllImport("user32.dll")]
+        private static extern bool AllowSetForegroundWindow(int processId);
+#endif
+
         private static string FormatToolResult(ToolResultPayload payload)
         {
             return payload.status switch
@@ -767,7 +892,7 @@ namespace ProjectSENA.App
                 "success" => payload.tool_name switch
                 {
                     "open_app" => "\uC571 \uC2E4\uD589\uC774 \uC644\uB8CC\uB410\uC5B4.",
-                    "get_active_window" => "\uD604\uC7AC \uCC3D \uC815\uBCF4\uB97C \uD655\uC778\uD588\uC5B4.",
+                    "get_active_window" => FormatActiveWindowToolResult(payload),
                     "capture_screen" => "\uD654\uBA74 \uCEA1\uCC98\uB97C \uB9C8\uCCE4\uC5B4.",
                     "type_text" => "\uD14D\uC2A4\uD2B8 \uC785\uB825\uC744 \uB9C8\uCCE4\uC5B4.",
                     _ => $"{GetToolDisplayName(payload.tool_name)} \uC791\uC5C5\uC744 \uB9C8\uCCE4\uC5B4."
@@ -777,10 +902,130 @@ namespace ProjectSENA.App
                     "open_app" => "\uC571 \uC2E4\uD589 \uC694\uCCAD\uC744 \uCDE8\uC18C\uD588\uC5B4.",
                     _ => $"{GetToolDisplayName(payload.tool_name)} \uC791\uC5C5\uC744 \uCDE8\uC18C\uD588\uC5B4."
                 },
-                _ => string.IsNullOrEmpty(payload.error_message)
-                    ? $"{GetToolDisplayName(payload.tool_name)} \uC791\uC5C5 \uC911 \uC624\uB958\uAC00 \uBC1C\uC0DD\uD588\uC5B4."
-                    : $"{GetToolDisplayName(payload.tool_name)} \uC791\uC5C5 \uC911 \uC624\uB958\uAC00 \uBC1C\uC0DD\uD588\uC5B4. \uC0C1\uD0DC\uB97C \uD655\uC778\uD55C \uB4A4 \uB2E4\uC2DC \uC2DC\uB3C4\uD574 \uC918."
+                _ => FormatToolError(payload)
             };
+        }
+
+        private static bool ShouldDisplayToolResultAsAssistant(ToolResultPayload payload)
+        {
+            return payload.status == "success" && payload.tool_name == "get_active_window";
+        }
+
+        private static string FormatActiveWindowToolResult(ToolResultPayload payload)
+        {
+            string title = GetResultString(payload, "window_title");
+            string processName = GetResultString(payload, "process_name");
+
+            if (string.IsNullOrEmpty(title) && string.IsNullOrEmpty(processName))
+            {
+                return "\uD604\uC7AC \uD65C\uC131 \uCC3D \uC815\uBCF4\uB97C \uD655\uC778\uD588\uC5B4.";
+            }
+
+            string descriptor = string.IsNullOrEmpty(title) ? processName : title;
+            if (!string.IsNullOrEmpty(title) && !string.IsNullOrEmpty(processName))
+            {
+                descriptor = $"{title} ({processName})";
+            }
+
+            return $"\uD604\uC7AC \uCC3D\uC740 {descriptor}\uC774\uC57C.";
+        }
+
+        private static string FormatToolError(ToolResultPayload payload)
+        {
+            if (payload.tool_name == "capture_screen")
+            {
+                string reason = GetResultString(payload, "reason");
+                if (reason == "missing_foreground_window")
+                {
+                    return "\uCEA1\uCC98\uD560 \uD65C\uC131 \uCC3D\uC744 \uCC3E\uC9C0 \uBABB\uD588\uC5B4. \uBA3C\uC800 \uCEA1\uCC98\uD560 \uCC3D\uC744 \uC120\uD0DD\uD574 \uC918.";
+                }
+
+                if (reason == "target_window_not_found" ||
+                    reason == "target_app_window_not_found")
+                {
+                    return "\uCEA1\uCC98\uD560 \uB300\uC0C1 \uCC3D\uC744 \uCC3E\uC9C0 \uBABB\uD588\uC5B4. \uCC3D\uC774 \uC5F4\uB824 \uC788\uB294\uC9C0 \uD655\uC778\uD55C \uB4A4 \uB2E4\uC2DC \uC2DC\uB3C4\uD574 \uC918.";
+                }
+
+                if (reason == "window_not_capturable")
+                {
+                    return "\uB300\uC0C1 \uCC3D\uC744 \uCEA1\uCC98\uD560 \uC218 \uC5C6\uC5B4. \uCC3D\uC774 \uCD5C\uC18C\uD654\uB418\uC5B4 \uC788\uB2E4\uBA74 \uB2E4\uC2DC \uC5F4\uC5B4 \uC900 \uB4A4 \uC2DC\uB3C4\uD574 \uC918.";
+                }
+
+                if (reason == "target_window_not_foreground")
+                {
+                    return "\uCEA1\uCC98\uD560 \uB300\uC0C1 \uCC3D\uC744 \uC55E\uC73C\uB85C \uAC00\uC838\uC624\uC9C0 \uBABB\uD588\uC5B4. \uCC3D\uC744 \uD655\uC778\uD55C \uB4A4 \uB2E4\uC2DC \uC2DC\uB3C4\uD574 \uC918.";
+                }
+
+                if (reason == "unsupported_capture_mode" ||
+                    reason == "unsupported_capture_format" ||
+                    reason == "window_rect_failed")
+                {
+                    return $"\uD654\uBA74 \uCEA1\uCC98\uB97C \uC644\uB8CC\uD558\uC9C0 \uBABB\uD588\uC5B4. \uC6D0\uC778: {reason}";
+                }
+            }
+
+            if (payload.tool_name == "type_text")
+            {
+                string reason = GetResultString(payload, "reason");
+                if (reason == "active_window_changed_before_typing" ||
+                    reason == "active_window_changed_while_typing")
+                {
+                    return "\uC785\uB825 \uB300\uC0C1 \uCC3D\uC774 \uBC14\uB00C\uC5B4\uC11C \uD14D\uC2A4\uD2B8\uB97C \uC785\uB825\uD558\uC9C0 \uC54A\uC558\uC5B4. \uB300\uC0C1 \uCC3D\uC744 \uD655\uC778\uD55C \uB4A4 \uB2E4\uC2DC \uC2DC\uB3C4\uD574 \uC918.";
+                }
+
+                if (reason == "missing_foreground_window")
+                {
+                    return "\uC785\uB825\uD560 \uD65C\uC131 \uCC3D\uC744 \uCC3E\uC9C0 \uBABB\uD588\uC5B4. \uBA3C\uC800 \uD14D\uC2A4\uD2B8\uB97C \uC785\uB825\uD560 \uCC3D\uC744 \uC120\uD0DD\uD574 \uC918.";
+                }
+
+                if (reason == "target_window_not_found")
+                {
+                    return "\uC785\uB825\uD560 \uB300\uC0C1 \uCC3D\uC744 \uB2E4\uC2DC \uCC3E\uC9C0 \uBABB\uD588\uC5B4. \uBA54\uBAA8\uC7A5\uC774 \uC5F4\uB824 \uC788\uB294\uC9C0 \uD655\uC778\uD55C \uB4A4 \uB2E4\uC2DC \uC2DC\uB3C4\uD574 \uC918.";
+                }
+
+                if (reason == "target_app_window_not_found")
+                {
+                    return "\uC694\uCCAD\uD55C \uC571 \uCC3D\uC744 \uCC3E\uC9C0 \uBABB\uD588\uC5B4. \uBA54\uBAA8\uC7A5\uC774 \uC5F4\uB824 \uC788\uB294\uC9C0 \uD655\uC778\uD55C \uB4A4 \uB2E4\uC2DC \uC2DC\uB3C4\uD574 \uC918.";
+                }
+
+                if (reason == "send_input_failed" ||
+                    reason == "clipboard_paste_failed" ||
+                    reason == "clipboard_open_failed" ||
+                    reason == "clipboard_alloc_failed" ||
+                    reason == "clipboard_lock_failed" ||
+                    reason == "clipboard_empty_failed" ||
+                    reason == "clipboard_set_failed" ||
+                    reason == "unexpected_executor_error")
+                {
+                    string win32Error = GetResultString(payload, "win32_error");
+                    string detail = string.IsNullOrEmpty(win32Error)
+                        ? reason
+                        : $"{reason}, Win32={win32Error}";
+                    return $"\uD14D\uC2A4\uD2B8 \uC785\uB825\uC744 \uC644\uB8CC\uD558\uC9C0 \uBABB\uD588\uC5B4. \uC6D0\uC778: {detail}";
+                }
+
+                if (!string.IsNullOrEmpty(payload.error_message))
+                {
+                    return $"\uD14D\uC2A4\uD2B8 \uC785\uB825\uC744 \uC644\uB8CC\uD558\uC9C0 \uBABB\uD588\uC5B4. \uC6D0\uC778: {payload.error_message}";
+                }
+            }
+
+            if (string.IsNullOrEmpty(payload.error_message))
+            {
+                return $"{GetToolDisplayName(payload.tool_name)} \uC791\uC5C5 \uC911 \uC624\uB958\uAC00 \uBC1C\uC0DD\uD588\uC5B4.";
+            }
+
+            return $"{GetToolDisplayName(payload.tool_name)} \uC791\uC5C5 \uC911 \uC624\uB958\uAC00 \uBC1C\uC0DD\uD588\uC5B4. \uC0C1\uD0DC\uB97C \uD655\uC778\uD55C \uB4A4 \uB2E4\uC2DC \uC2DC\uB3C4\uD574 \uC918.";
+        }
+
+        private static string GetResultString(ToolResultPayload payload, string key)
+        {
+            if (payload.result == null || !payload.result.TryGetValue(key, out object value) || value == null)
+            {
+                return string.Empty;
+            }
+
+            return value.ToString();
         }
 
         private static string GetToolDisplayName(string toolName)
@@ -820,6 +1065,7 @@ namespace ProjectSENA.App
                 "Waiting for user approval." => "\uC2B9\uC778\uC744 \uAE30\uB2E4\uB9AC\uACE0 \uC788\uC5B4.",
                 "Waiting for desktop tool execution." => "\uB370\uC2A4\uD06C\uD1B1 \uC791\uC5C5 \uACB0\uACFC\uB97C \uAE30\uB2E4\uB9AC\uACE0 \uC788\uC5B4.",
                 "Tool execution completed." => "\uC791\uC5C5\uC774 \uC644\uB8CC\uB410\uC5B4.",
+                "Observation completed." => "\uD655\uC778\uD588\uC5B4.",
                 "Tool execution denied." => "\uC791\uC5C5\uC744 \uCDE8\uC18C\uD588\uC5B4.",
                 "Tool execution failed." => "\uC791\uC5C5 \uC2E4\uD589\uC5D0 \uC2E4\uD328\uD588\uC5B4.",
                 "Desktop-agent returned an error." => "\uB370\uC2A4\uD06C\uD1B1 \uC5D0\uC774\uC804\uD2B8\uC5D0\uC11C \uC624\uB958\uAC00 \uB3CC\uC544\uC654\uC5B4.",
@@ -828,6 +1074,7 @@ namespace ProjectSENA.App
                 "Server response timed out." => "\uC11C\uBC84 \uC751\uB2F5 \uC2DC\uAC04\uC774 \uCD08\uACFC\uB410\uC5B4.",
                 "Server returned an error." => "\uC11C\uBC84\uAC00 \uC624\uB958 \uC751\uB2F5\uC744 \uBCF4\uB0C8\uC5B4.",
                 "Server response could not be read." => "\uC11C\uBC84 \uC751\uB2F5\uC744 \uC77D\uC9C0 \uBABB\uD588\uC5B4.",
+                "No pending approval exists." => "\uCC98\uB9AC\uD560 \uC2B9\uC778 \uC694\uCCAD\uC774 \uC5C6\uC5B4.",
                 _ => detail
             };
         }

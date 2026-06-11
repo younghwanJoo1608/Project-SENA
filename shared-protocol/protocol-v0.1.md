@@ -194,6 +194,92 @@ Allowed MVP tools:
 
 Any tool outside the known set is invalid in `v0.1`.
 
+### `capture_screen`
+
+`capture_screen` saves a visible desktop screenshot to a PNG file. It may expose
+private desktop contents and must use `approval_policy: "user_confirmation"`.
+
+Required `tool_request.payload.arguments` fields:
+
+- `capture_mode`: one of `all_screens`, `active_window`, or `target_window`.
+
+Optional fields:
+
+- `target_app`: app alias to resolve for `target_window`, currently `notepad`;
+- `window_title_contains`: title matching hint for future target-window
+  selection;
+- `output_format`: currently only `png`;
+- `output_path`: explicit save path. If omitted, desktop-agent saves under the
+  local Project-SENA capture directory.
+
+For `active_window`, desktop-agent records the current foreground window before
+creating the `approval_request`. For `target_window`, desktop-agent resolves the
+requested window before creating the `approval_request`. The resolved window
+metadata is added with the same expected-window fields used by `type_text`.
+
+Successful `tool_result.payload.result` fields:
+
+- `saved`: `true`;
+- `output_path`: PNG file path;
+- `width`: image width in pixels;
+- `height`: image height in pixels;
+- `capture_mode`: normalized capture mode;
+- `output_format`: `png`;
+- `target_window`: window metadata for window captures, if applicable;
+- `capture_rect`: captured desktop rectangle for window captures, if
+  applicable.
+
+### `get_active_window`
+
+`get_active_window` is an observation-only desktop tool. It may be requested with
+`approval_policy: "auto_allowed"` because it does not mutate desktop state.
+
+Successful `tool_result.payload.result` fields:
+
+- `window_title`: foreground window title, if available;
+- `window_handle`: Win32 window handle as an integer;
+- `process_id`: owning process id, if available;
+- `process_name`: owning process executable name, if available;
+- `executable_path`: owning process executable path, if available.
+
+### `type_text`
+
+`type_text` inserts text into a verified desktop input target. It mutates
+desktop state and must use `approval_policy: "user_confirmation"`.
+
+Required `tool_request.payload.arguments` fields:
+
+- `text`: text to type.
+
+Optional target selection fields:
+
+- `target_app`: app alias to resolve before approval, currently `notepad`.
+
+When a prior desktop tool produced a known target window, inference-server may
+include these expected-window arguments. If `target_app` is present,
+desktop-agent resolves the matching running app window before creating the
+`approval_request`. If both are absent, desktop-agent records the current
+foreground window before creating the `approval_request` and adds the expected
+window fields before storing the pending tool:
+
+- `expected_window_title`;
+- `expected_window_handle`;
+- `expected_process_id`;
+- `expected_process_name`;
+- `expected_executable_path`.
+
+Before execution, desktop-agent must focus the recorded expected window and
+compare the current foreground window with it. If the target cannot be found or
+the foreground does not match the expected window, it must return an error
+`tool_result` and refuse to type. This prevents text from being sent to a
+different app after the user moves focus.
+
+Successful `tool_result.payload.result` fields:
+
+- `typed`: `true`;
+- `length`: length of the requested text;
+- `target_window`: foreground window metadata used for the execution.
+
 ## Versioning Rule
 
 Additive changes are preferred.
