@@ -20,6 +20,9 @@ APP_PROCESS_NAMES = {
     "notepad.exe": "notepad.exe",
 }
 DWMWA_EXTENDED_FRAME_BOUNDS = 9
+DEFAULT_CAPTURE_RETENTION_DAYS = 7
+DEFAULT_CAPTURE_MAX_BYTES = 1024 * 1024 * 1024
+DEFAULT_CAPTURE_MAX_FILES = 500
 
 
 def _enable_process_dpi_awareness() -> None:
@@ -363,6 +366,10 @@ class DesktopToolExecutor:
             }
         if target_window is not None:
             result["target_window"] = self._window_result(target_window)
+        result["cleanup"] = _cleanup_capture_directory(
+            output_file.parent,
+            protected_paths={output_file},
+        )
 
         return ToolExecutionOutcome(
             result=result
@@ -965,6 +972,148 @@ def _resolve_capture_output_path(arguments: dict, capture_mode: str) -> Path:
 
     timestamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
     return base_dir / f"capture_{timestamp}_{capture_mode}_{uuid4().hex[:8]}.png"
+
+
+def _cleanup_capture_directory(
+    capture_dir: Path,
+    protected_paths: set[Path] | None = None,
+) -> dict:
+    summary = {
+        "enabled": True,
+        "deleted_files": 0,
+        "deleted_bytes": 0,
+        "error_message": None,
+    }
+    try:
+        retention_days = _read_int_env(
+            "PROJECT_SENA_CAPTURE_RETENTION_DAYS",
+            DEFAULT_CAPTURE_RETENTION_DAYS,
+            minimum=0,
+        )
+        max_bytes = _read_int_env(
+            "PROJECT_SENA_CAPTURE_MAX_BYTES",
+            DEFAULT_CAPTURE_MAX_BYTES,
+            minimum=0,
+        )
+        max_files = _read_int_env(
+            "PROJECT_SENA_CAPTURE_MAX_FILES",
+            DEFAULT_CAPTURE_MAX_FILES,
+            minimum=0,
+        )
+        now = time.time()
+        candidates = _list_cleanup_candidates(capture_dir, protected_paths or set())
+
+        if retention_days > 0:
+            cutoff = now - (retention_days * 24 * 60 * 60)
+            expired = [item for item in candidates if item["mtime"] < cutoff]
+            _delete_capture_candidates(expired, summary)
+            expired_paths = {item["path"] for item in expired}
+            candidates = [
+                item for item in candidates if item["path"] not in expired_paths
+            ]
+
+        candidates = [item for item in candidates if Path(item["path"]).exists()]
+        total_bytes = sum(int(item["size"]) for item in candidates)
+        candidates.sort(key=lambda item: float(item["mtime"]))
+
+        while candidates and (
+            (max_files > 0 and len(candidates) > max_files)
+            or (max_bytes > 0 and total_bytes > max_bytes)
+        ):
+            item = candidates.pop(0)
+            deleted_bytes = _delete_capture_candidate(item, summary)
+            total_bytes -= deleted_bytes
+    except Exception as exc:  # pragma: no cover - defensive cleanup boundary
+        summary["error_message"] = f"{type(exc).__name__}: {exc}"
+
+    return summary
+
+
+def _list_cleanup_candidates(
+    capture_dir: Path,
+    protected_paths: set[Path],
+) -> list[dict]:
+    if not capture_dir.exists():
+        return []
+
+    normalized_protected_paths = {
+        _normalize_path_for_compare(path) for path in protected_paths
+    }
+    candidates: list[dict] = []
+    for path in capture_dir.rglob("capture_*.png"):
+        if _normalize_path_for_compare(path) in normalized_protected_paths:
+            continue
+        if not path.is_file() or _is_preserved_capture(path, capture_dir):
+            continue
+
+        try:
+            stat = path.stat()
+        except OSError:
+            continue
+
+        candidates.append(
+            {
+                "path": path,
+                "mtime": stat.st_mtime,
+                "size": stat.st_size,
+            }
+        )
+    return candidates
+
+
+def _normalize_path_for_compare(path: Path) -> str:
+    try:
+        return str(path.resolve()).lower()
+    except OSError:
+        return str(path.absolute()).lower()
+
+
+def _is_preserved_capture(path: Path, capture_dir: Path) -> bool:
+    try:
+        relative = path.relative_to(capture_dir)
+    except ValueError:
+        return True
+
+    if relative.parts and relative.parts[0].lower() == "keep":
+        return True
+    return ".keep" in path.name
+
+
+def _delete_capture_candidates(candidates: list[dict], summary: dict) -> None:
+    for item in sorted(candidates, key=lambda candidate: float(candidate["mtime"])):
+        _delete_capture_candidate(item, summary)
+
+
+def _delete_capture_candidate(item: dict, summary: dict) -> int:
+    path = Path(item["path"])
+    size = int(item["size"])
+    try:
+        path.unlink()
+    except FileNotFoundError:
+        return 0
+    except OSError as exc:
+        previous = summary.get("error_message")
+        message = f"{type(exc).__name__}: {exc}"
+        summary["error_message"] = (
+            message if not previous else f"{previous}; {message}"
+        )
+        return 0
+
+    summary["deleted_files"] = int(summary["deleted_files"]) + 1
+    summary["deleted_bytes"] = int(summary["deleted_bytes"]) + size
+    return size
+
+
+def _read_int_env(name: str, default: int, minimum: int = 0) -> int:
+    raw = os.getenv(name)
+    if raw is None or raw.strip() == "":
+        return default
+
+    try:
+        value = int(raw)
+    except ValueError:
+        return default
+    return max(minimum, value)
 
 
 def kernel32_get_current_thread_id() -> int:

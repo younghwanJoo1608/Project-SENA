@@ -230,6 +230,9 @@ Phase 1.5는 아래가 되면 완료로 본다.
 - `open_app` 외 최소 1개 tool이 추가로 검증된다
 - 다음 Phase의 캐릭터/음성/화면 인식 확장을 막는 큰 구조 문제가 없다
 
+통합 회귀 테스트 절차는 `docs/phase-1.5-regression-checklist.kr.md`를 기준으로 한다.
+캡처 파일 보관과 자동 정리 기준은 `docs/capture-retention-policy.kr.md`를 기준으로 한다.
+
 ## 다음 Phase 연결
 
 Phase 1.5가 끝나면 다음 후보는 두 갈래다.

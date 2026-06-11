@@ -1,8 +1,11 @@
+import os
+
 from project_sena_desktop_agent.executor import (
     DesktopToolExecutor,
     TEST_FAILURE_APP_NAME,
     ToolExecutionError,
     WindowInfo,
+    _cleanup_capture_directory,
 )
 
 
@@ -158,6 +161,8 @@ def test_capture_screen_saves_all_screens_to_default_path(monkeypatch, tmp_path)
     assert outcome.result["output_path"].startswith(str(tmp_path))
     assert outcome.result["output_path"].endswith(".png")
     assert image.saved_path == outcome.result["output_path"]
+    assert outcome.result["cleanup"]["enabled"] is True
+    assert outcome.result["cleanup"]["deleted_files"] == 0
 
 
 def test_capture_screen_crops_active_window(monkeypatch, tmp_path) -> None:
@@ -230,6 +235,113 @@ def test_capture_screen_crops_target_app_window(monkeypatch, tmp_path) -> None:
     assert outcome.result["capture_mode"] == "target_window"
     assert outcome.result["width"] == 600
     assert outcome.result["target_window"]["window_handle"] == 2002
+
+
+def test_capture_cleanup_deletes_expired_files(monkeypatch, tmp_path) -> None:
+    old_file = tmp_path / "capture_20260101T000000Z_all_screens_old.png"
+    keep_file = tmp_path / "capture_20260101T000000Z_all_screens_keep.keep.png"
+    old_file.write_bytes(b"old")
+    keep_file.write_bytes(b"keep")
+    old_mtime = 1_700_000_000
+    monkeypatch.setenv("PROJECT_SENA_CAPTURE_RETENTION_DAYS", "7")
+    monkeypatch.setenv("PROJECT_SENA_CAPTURE_MAX_BYTES", "0")
+    monkeypatch.setenv("PROJECT_SENA_CAPTURE_MAX_FILES", "0")
+    monkeypatch.setattr(
+        "project_sena_desktop_agent.executor.time.time",
+        lambda: old_mtime + 10 * 24 * 60 * 60,
+    )
+    for path in (old_file, keep_file):
+        path.touch()
+        os.utime(path, (old_mtime, old_mtime))
+
+    summary = _cleanup_capture_directory(tmp_path)
+
+    assert summary["deleted_files"] == 1
+    assert summary["deleted_bytes"] == 3
+    assert not old_file.exists()
+    assert keep_file.exists()
+
+
+def test_capture_cleanup_enforces_file_limit(monkeypatch, tmp_path) -> None:
+    monkeypatch.setenv("PROJECT_SENA_CAPTURE_RETENTION_DAYS", "0")
+    monkeypatch.setenv("PROJECT_SENA_CAPTURE_MAX_BYTES", "0")
+    monkeypatch.setenv("PROJECT_SENA_CAPTURE_MAX_FILES", "2")
+
+    files = []
+    for index in range(3):
+        path = tmp_path / f"capture_20260101T00000{index}Z_all_screens_{index}.png"
+        path.write_bytes(bytes([index]))
+        os.utime(path, (1_700_000_000 + index, 1_700_000_000 + index))
+        files.append(path)
+
+    summary = _cleanup_capture_directory(tmp_path)
+
+    assert summary["deleted_files"] == 1
+    assert not files[0].exists()
+    assert files[1].exists()
+    assert files[2].exists()
+
+
+def test_capture_cleanup_enforces_size_limit(monkeypatch, tmp_path) -> None:
+    monkeypatch.setenv("PROJECT_SENA_CAPTURE_RETENTION_DAYS", "0")
+    monkeypatch.setenv("PROJECT_SENA_CAPTURE_MAX_BYTES", "5")
+    monkeypatch.setenv("PROJECT_SENA_CAPTURE_MAX_FILES", "0")
+
+    first = tmp_path / "capture_20260101T000000Z_all_screens_first.png"
+    second = tmp_path / "capture_20260101T000001Z_all_screens_second.png"
+    first.write_bytes(b"1234")
+    second.write_bytes(b"5678")
+    os.utime(first, (1_700_000_000, 1_700_000_000))
+    os.utime(second, (1_700_000_001, 1_700_000_001))
+
+    summary = _cleanup_capture_directory(tmp_path)
+
+    assert summary["deleted_files"] == 1
+    assert summary["deleted_bytes"] == 4
+    assert not first.exists()
+    assert second.exists()
+
+
+def test_capture_cleanup_keeps_protected_current_capture(monkeypatch, tmp_path) -> None:
+    monkeypatch.setenv("PROJECT_SENA_CAPTURE_RETENTION_DAYS", "0")
+    monkeypatch.setenv("PROJECT_SENA_CAPTURE_MAX_BYTES", "1")
+    monkeypatch.setenv("PROJECT_SENA_CAPTURE_MAX_FILES", "1")
+
+    old_file = tmp_path / "capture_20260101T000000Z_all_screens_old.png"
+    current_file = tmp_path / "capture_20260101T000001Z_all_screens_current.png"
+    old_file.write_bytes(b"old")
+    current_file.write_bytes(b"current")
+    os.utime(old_file, (1_700_000_000, 1_700_000_000))
+    os.utime(current_file, (1_700_000_001, 1_700_000_001))
+
+    summary = _cleanup_capture_directory(
+        tmp_path,
+        protected_paths={current_file},
+    )
+
+    assert summary["deleted_files"] == 1
+    assert not old_file.exists()
+    assert current_file.exists()
+
+
+def test_capture_cleanup_skips_keep_directory(monkeypatch, tmp_path) -> None:
+    monkeypatch.setenv("PROJECT_SENA_CAPTURE_RETENTION_DAYS", "1")
+    monkeypatch.setenv("PROJECT_SENA_CAPTURE_MAX_BYTES", "1")
+    monkeypatch.setenv("PROJECT_SENA_CAPTURE_MAX_FILES", "1")
+    keep_dir = tmp_path / "keep"
+    keep_dir.mkdir()
+    keep_file = keep_dir / "capture_20260101T000000Z_all_screens_keep.png"
+    keep_file.write_bytes(b"keep")
+    os.utime(keep_file, (1_700_000_000, 1_700_000_000))
+    monkeypatch.setattr(
+        "project_sena_desktop_agent.executor.time.time",
+        lambda: 1_700_000_000 + 10 * 24 * 60 * 60,
+    )
+
+    summary = _cleanup_capture_directory(tmp_path)
+
+    assert summary["deleted_files"] == 0
+    assert keep_file.exists()
 
 
 def test_type_text_sends_unicode_text_to_expected_foreground_window(monkeypatch) -> None:
