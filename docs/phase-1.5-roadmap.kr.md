@@ -3,6 +3,10 @@
 Project-SENA의 Phase 1은 "Unity client -> inference-server -> desktop-agent -> 승인 -> 실행 -> 결과 반영"의 최소 제어 루프를 닫는 단계였다.  
 Phase 1.5의 목표는 이 제어 루프를 더 예쁘게 만드는 것이 아니라, **실제로 계속 켜두고 써도 되는 수준의 안정성, 복구성, 확장 준비도**를 확보하는 것이다.
 
+상태: 완료
+완료일: 2026-06-11
+완료 기록: `docs/phase-1.5-completion-report.kr.md`
+
 즉 이번 단계에서는 Live2D나 음성보다 먼저, 아래 질문에 답할 수 있어야 한다.
 
 - 앱을 몇 번 반복해서 써도 흐름이 안정적인가?
