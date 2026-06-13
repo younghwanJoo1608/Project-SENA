@@ -55,6 +55,17 @@ voices/
 datasets/
 user-assets/
 local-assets/
+unity-client/Project-SENA-UnityClient/Assets/ProjectSENA/Characters/UserModels/
+unity-client/Project-SENA-UnityClient/Assets/ProjectSENA/Characters/UserModels.meta
+unity-client/Project-SENA-UnityClient/Assets/ProjectSENA/Characters/DownloadedModels/
+unity-client/Project-SENA-UnityClient/Assets/ProjectSENA/Characters/DownloadedModels.meta
+unity-client/Project-SENA-UnityClient/Assets/Live2D/
+unity-client/Project-SENA-UnityClient/Assets/Live2D.meta
+unity-client/Project-SENA-UnityClient/Assets/csc.rsp
+unity-client/Project-SENA-UnityClient/Assets/csc.rsp.meta
+unity-client/Project-SENA-UnityClient/Assets/mcs.rsp
+unity-client/Project-SENA-UnityClient/Assets/mcs.rsp.meta
+CubismSdkForUnity-*.unitypackage
 
 # Unity generated directories and IDE files
 [Ll]ibrary/

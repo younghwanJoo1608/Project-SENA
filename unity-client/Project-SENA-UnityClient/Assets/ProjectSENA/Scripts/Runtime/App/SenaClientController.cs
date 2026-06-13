@@ -1,5 +1,6 @@
 using System.Collections;
 using System.Runtime.InteropServices;
+using ProjectSENA.Character;
 using ProjectSENA.Networking;
 using ProjectSENA.Protocol;
 using ProjectSENA.UI;
@@ -33,6 +34,9 @@ namespace ProjectSENA.App
         [SerializeField] private ChatPanelController chatPanel;
         [SerializeField] private ApprovalPanelController approvalPanel;
         [SerializeField] private RectTransform approvalPanelRect;
+
+        [Header("Character")]
+        [SerializeField] private CharacterStateController characterState;
 
         [Header("Input Composer")]
         [SerializeField] private float minInputFieldHeight = 56f;
@@ -118,6 +122,8 @@ namespace ProjectSENA.App
             {
                 _rootCanvasRect = rootCanvasRect;
             }
+
+            EnsureCharacterStateController();
 
             if (composerPanelRect != null && _inputFieldRect != null)
             {
@@ -319,6 +325,34 @@ namespace ProjectSENA.App
                 error => Debug.LogWarning($"Project-SENA approval cancellation failed: {error}"));
         }
 
+        private void EnsureCharacterStateController()
+        {
+            if (characterState != null)
+            {
+                return;
+            }
+
+            characterState = UnityEngine.Object.FindAnyObjectByType<CharacterStateController>();
+            if (characterState != null)
+            {
+                return;
+            }
+
+            RectTransform parent = _rootCanvasRect;
+            if (parent == null)
+            {
+                Canvas canvas = UnityEngine.Object.FindAnyObjectByType<Canvas>();
+                parent = canvas != null ? canvas.transform as RectTransform : null;
+            }
+
+            if (parent == null)
+            {
+                return;
+            }
+
+            characterState = CharacterPlaceholderFactory.Create(parent);
+        }
+
         private void HandleInputFieldValueChanged(string _)
         {
             QueueInputFieldHeightRefresh();
@@ -421,6 +455,7 @@ namespace ProjectSENA.App
                     case "assistant_text":
                     {
                         AssistantTextPayload payload = message.ToPayload<AssistantTextPayload>();
+                        characterState?.ApplyAssistantText(payload.persona_state, payload.should_speak);
                         chatPanel?.AppendAssistantMessage(payload.display_text);
                         break;
                     }
@@ -435,12 +470,14 @@ namespace ProjectSENA.App
                         ApprovalRequestPayload payload = message.ToPayload<ApprovalRequestPayload>();
                         _approvalPending = true;
                         UpdateSendInteractivity();
+                        characterState?.ApplyApprovalRequest();
                         approvalPanel?.Show(payload, approved => OnApprovalDecision(approved));
                         break;
                     }
                     case "tool_result":
                     {
                         ToolResultPayload payload = message.ToPayload<ToolResultPayload>();
+                        characterState?.ApplyToolResult(payload.status);
                         string toolResultText = FormatToolResult(payload);
                         if (ShouldDisplayToolResultAsAssistant(payload))
                         {
@@ -768,6 +805,8 @@ namespace ProjectSENA.App
 
         private void UpdateAssistantState(string state, string detail)
         {
+            characterState?.ApplyAssistantState(state, detail);
+
             if (assistantStateText == null)
             {
                 return;
