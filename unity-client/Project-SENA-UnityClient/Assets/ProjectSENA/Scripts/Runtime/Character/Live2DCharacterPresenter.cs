@@ -1,5 +1,6 @@
 #if PROJECT_SENA_LIVE2D
 using System;
+using System.Collections;
 using System.IO;
 using System.Text;
 using Live2D.Cubism.Framework.Expression;
@@ -21,11 +22,21 @@ namespace ProjectSENA.Character
         [Header("Motion Clips")]
         [SerializeField] private MotionClipBinding[] motionClips = Array.Empty<MotionClipBinding>();
         [SerializeField] private bool replaySameMotion;
+        [SerializeField] private bool warnOnSkippedMotion = true;
+        [SerializeField] private bool rebindAnimatorBeforeFirstMotion = true;
 
         private string currentExpressionName;
         private string currentMotionName;
         private bool warnedMissingExpressionController;
         private bool warnedMissingExpressionList;
+        private bool warnedMissingMotionController;
+        private bool warnedEmptyMotionClips;
+        private bool warnedAnimatorController;
+        private bool warnedMissingAnimator;
+        private bool animatorReboundForMotion;
+        private bool canPlayMotions;
+        private bool hasLatestPresentation;
+        private SenaCharacterPresentation latestPresentation;
 
         private void Awake()
         {
@@ -40,8 +51,16 @@ namespace ProjectSENA.Character
             }
         }
 
+        private void Start()
+        {
+            StartCoroutine(EnableMotionPlaybackAfterFirstFrame());
+        }
+
         public override void ApplyPresentation(SenaCharacterPresentation presentation)
         {
+            latestPresentation = presentation;
+            hasLatestPresentation = true;
+
             ApplyExpression(presentation);
             ApplyMotion(presentation);
         }
@@ -143,32 +162,136 @@ namespace ProjectSENA.Character
 
         private void ApplyMotion(SenaCharacterPresentation presentation)
         {
-            if (motionController == null)
-            {
-                return;
-            }
+            ApplyMotion(presentation, forceReplay: false);
+        }
 
+        private void ApplyMotion(SenaCharacterPresentation presentation, bool forceReplay)
+        {
             string targetMotion = bindingProfile == null
                 ? presentation.MotionKey
                 : bindingProfile.ResolveMotion(presentation.MotionKey, presentation.MotionKey);
 
             if (string.IsNullOrEmpty(targetMotion) ||
-                (!replaySameMotion && NamesMatch(currentMotionName, targetMotion)))
+                (!forceReplay && !replaySameMotion && NamesMatch(currentMotionName, targetMotion)))
             {
                 return;
             }
 
-            if (!TryFindMotionClip(targetMotion, out MotionClipBinding motionClip) ||
-                motionClip.clip == null)
+            if (!canPlayMotions)
             {
                 return;
             }
+
+            if (motionController == null)
+            {
+                if (warnOnSkippedMotion)
+                {
+                    WarnOnce(
+                        ref warnedMissingMotionController,
+                        $"Live2D motion controller is not assigned. Motion '{targetMotion}' will be skipped.");
+                }
+
+                return;
+            }
+
+            if (motionClips == null || motionClips.Length == 0)
+            {
+                if (warnOnSkippedMotion)
+                {
+                    WarnOnce(
+                        ref warnedEmptyMotionClips,
+                        $"Live2D motion clips are not configured. Motion '{targetMotion}' will be skipped.");
+                }
+
+                return;
+            }
+
+            if (!TryFindMotionClip(targetMotion, out MotionClipBinding motionClip))
+            {
+                if (warnOnSkippedMotion)
+                {
+                    Debug.LogWarning(
+                        $"Live2D motion was not found: {targetMotion}. " +
+                        $"Available motions: {BuildAvailableMotionList()}",
+                        this);
+                }
+
+                return;
+            }
+
+            if (motionClip.clip == null)
+            {
+                if (warnOnSkippedMotion)
+                {
+                    Debug.LogWarning(
+                        $"Live2D motion clip is not assigned for motion: {targetMotion}.",
+                        this);
+                }
+
+                return;
+            }
+
+            PrepareMotionPlayback();
 
             motionController.PlayAnimation(
                 motionClip.clip,
                 priority: ToCubismPriority(motionClip.priority),
                 isLoop: motionClip.loop);
             currentMotionName = targetMotion;
+        }
+
+        private IEnumerator EnableMotionPlaybackAfterFirstFrame()
+        {
+            yield return null;
+
+            canPlayMotions = true;
+
+            if (hasLatestPresentation)
+            {
+                ApplyMotion(latestPresentation, forceReplay: true);
+            }
+        }
+
+        private void PrepareMotionPlayback()
+        {
+            Animator animator = ResolveAnimator();
+            if (animator == null)
+            {
+                WarnOnce(
+                    ref warnedMissingAnimator,
+                    "Live2D Animator is not found. CubismMotionController requires an Animator on the model root.");
+                return;
+            }
+
+            if (animator.runtimeAnimatorController != null)
+            {
+                WarnOnce(
+                    ref warnedAnimatorController,
+                    "Live2D Animator has an AnimatorController assigned. CubismMotionController playback expects the Animator Controller field to be empty.");
+            }
+
+            if (!rebindAnimatorBeforeFirstMotion || animatorReboundForMotion)
+            {
+                return;
+            }
+
+            animator.Rebind();
+            animator.Update(0f);
+            animatorReboundForMotion = true;
+        }
+
+        private Animator ResolveAnimator()
+        {
+            if (motionController != null)
+            {
+                Animator animator = motionController.GetComponent<Animator>();
+                if (animator != null)
+                {
+                    return animator;
+                }
+            }
+
+            return GetComponentInChildren<Animator>(includeInactive: true);
         }
 
         private bool TryFindMotionClip(string motionName, out MotionClipBinding motionClip)
@@ -184,6 +307,32 @@ namespace ProjectSENA.Character
 
             motionClip = default;
             return false;
+        }
+
+        private string BuildAvailableMotionList()
+        {
+            if (motionClips == null || motionClips.Length == 0)
+            {
+                return "(none)";
+            }
+
+            StringBuilder builder = new StringBuilder();
+            foreach (MotionClipBinding candidate in motionClips)
+            {
+                if (string.IsNullOrWhiteSpace(candidate.motionName))
+                {
+                    continue;
+                }
+
+                if (builder.Length > 0)
+                {
+                    builder.Append(", ");
+                }
+
+                builder.Append(candidate.motionName);
+            }
+
+            return builder.Length == 0 ? "(none)" : builder.ToString();
         }
 
         private static int ToCubismPriority(SenaLive2DMotionPriority priority)

@@ -50,6 +50,12 @@ namespace ProjectSENA.Character
             EmitStateChanged();
         }
 
+        private void Start()
+        {
+            // Run once after every component has completed Awake so Live2D bindings can initialize.
+            EmitStateChanged();
+        }
+
         public void ApplyAssistantState(string assistantState, string detail)
         {
             CurrentAssistantState = string.IsNullOrEmpty(assistantState) ? "idle" : assistantState;
@@ -68,7 +74,14 @@ namespace ProjectSENA.Character
             CurrentPersonaState = string.IsNullOrEmpty(personaState) ? "neutral" : personaState;
             ShouldSpeak = shouldSpeak;
 
+            if (shouldSpeak)
+            {
+                SetState(SenaCharacterState.Speaking);
+                return;
+            }
+
             if (CurrentState == SenaCharacterState.Idle ||
+                CurrentState == SenaCharacterState.Speaking ||
                 CurrentState == SenaCharacterState.Satisfied ||
                 CurrentState == SenaCharacterState.Concerned)
             {

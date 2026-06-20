@@ -22,6 +22,16 @@ namespace ProjectSENA.Editor
                 profile = ScriptableObject.CreateInstance<SenaCharacterBindingProfile>();
                 AssetDatabase.CreateAsset(profile, AssetPath);
             }
+            else if (!EditorUtility.DisplayDialog(
+                         "Overwrite character binding profile?",
+                         "SenaDefaultCharacterBindingProfile already exists. Overwrite its expression and motion bindings with the generic SENA defaults?",
+                         "Overwrite",
+                         "Cancel"))
+            {
+                Selection.activeObject = profile;
+                EditorGUIUtility.PingObject(profile);
+                return;
+            }
 
             profile.SetBindings(CreateExpressionBindings(), CreateMotionBindings());
             EditorUtility.SetDirty(profile);
@@ -39,11 +49,11 @@ namespace ProjectSENA.Editor
                 Expression(SenaExpressionKeys.Neutral, SenaExpressionKeys.Neutral),
                 Expression(SenaExpressionKeys.Focused, SenaExpressionKeys.Focused),
                 Expression(SenaExpressionKeys.Thinking, SenaExpressionKeys.Thinking),
-                Expression(SenaExpressionKeys.AwaitingApproval, SenaExpressionKeys.Focused),
-                Expression(SenaExpressionKeys.Speaking, SenaExpressionKeys.Neutral),
+                Expression(SenaExpressionKeys.AwaitingApproval, SenaExpressionKeys.AwaitingApproval),
+                Expression(SenaExpressionKeys.Speaking, SenaExpressionKeys.Speaking),
                 Expression(SenaExpressionKeys.Satisfied, SenaExpressionKeys.Satisfied),
                 Expression(SenaExpressionKeys.Concerned, SenaExpressionKeys.Concerned),
-                Expression(SenaExpressionKeys.Disconnected, SenaExpressionKeys.Concerned),
+                Expression(SenaExpressionKeys.Disconnected, SenaExpressionKeys.Disconnected),
                 Expression(SenaExpressionKeys.Error, SenaExpressionKeys.Error)
             };
         }
@@ -53,14 +63,14 @@ namespace ProjectSENA.Editor
             return new[]
             {
                 Motion(SenaMotionKeys.Idle, SenaMotionKeys.Idle),
-                Motion(SenaMotionKeys.Listening, SenaMotionKeys.Idle),
+                Motion(SenaMotionKeys.Listening, SenaMotionKeys.Listening),
                 Motion(SenaMotionKeys.Thinking, SenaMotionKeys.Thinking),
-                Motion(SenaMotionKeys.AwaitingApproval, SenaMotionKeys.Thinking),
-                Motion(SenaMotionKeys.ToolRunning, SenaMotionKeys.Thinking),
+                Motion(SenaMotionKeys.AwaitingApproval, SenaMotionKeys.AwaitingApproval),
+                Motion(SenaMotionKeys.ToolRunning, SenaMotionKeys.ToolRunning),
                 Motion(SenaMotionKeys.Speaking, SenaMotionKeys.Speaking),
                 Motion(SenaMotionKeys.Positive, SenaMotionKeys.Positive),
                 Motion(SenaMotionKeys.Concerned, SenaMotionKeys.Concerned),
-                Motion(SenaMotionKeys.Error, SenaMotionKeys.Concerned)
+                Motion(SenaMotionKeys.Error, SenaMotionKeys.Error)
             };
         }
 

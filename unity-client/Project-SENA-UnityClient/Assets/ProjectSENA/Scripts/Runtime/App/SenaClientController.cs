@@ -37,6 +37,7 @@ namespace ProjectSENA.App
 
         [Header("Character")]
         [SerializeField] private CharacterStateController characterState;
+        [SerializeField] private float minimumSpeakingPresentationSeconds = 1.2f;
 
         [Header("Input Composer")]
         [SerializeField] private float minInputFieldHeight = 56f;
@@ -61,8 +62,13 @@ namespace ProjectSENA.App
         private bool _inputHeightRefreshPending;
         private bool _submitDeferredUntilCompositionEnds;
         private bool _submitFromEnterPending;
+        private bool _characterSpeakingHoldActive;
+        private bool _hasDeferredAssistantState;
         private float _composerExtraHeight;
         private Vector2 _lastCanvasSize;
+        private Coroutine _speakingHoldCoroutine;
+        private string _deferredAssistantState;
+        private string _deferredAssistantDetail;
 
         private void Awake()
         {
@@ -140,6 +146,8 @@ namespace ProjectSENA.App
 
         private void OnDestroy()
         {
+            CancelCharacterSpeakingHold();
+
             if (sendButton != null)
             {
                 sendButton.onClick.RemoveListener(SendCurrentInput);
@@ -291,6 +299,7 @@ namespace ProjectSENA.App
             _submitDeferredUntilCompositionEnds = false;
             _submitFromEnterPending = false;
             _inputHeightRefreshPending = false;
+            CancelCharacterSpeakingHold();
 
             approvalPanel?.Hide();
             chatPanel?.Clear();
@@ -455,7 +464,7 @@ namespace ProjectSENA.App
                     case "assistant_text":
                     {
                         AssistantTextPayload payload = message.ToPayload<AssistantTextPayload>();
-                        characterState?.ApplyAssistantText(payload.persona_state, payload.should_speak);
+                        ApplyAssistantTextToCharacter(payload.persona_state, payload.should_speak);
                         chatPanel?.AppendAssistantMessage(payload.display_text);
                         break;
                     }
@@ -470,6 +479,7 @@ namespace ProjectSENA.App
                         ApprovalRequestPayload payload = message.ToPayload<ApprovalRequestPayload>();
                         _approvalPending = true;
                         UpdateSendInteractivity();
+                        CancelCharacterSpeakingHold();
                         characterState?.ApplyApprovalRequest();
                         approvalPanel?.Show(payload, approved => OnApprovalDecision(approved));
                         break;
@@ -477,6 +487,7 @@ namespace ProjectSENA.App
                     case "tool_result":
                     {
                         ToolResultPayload payload = message.ToPayload<ToolResultPayload>();
+                        CancelCharacterSpeakingHold();
                         characterState?.ApplyToolResult(payload.status);
                         string toolResultText = FormatToolResult(payload);
                         if (ShouldDisplayToolResultAsAssistant(payload))
@@ -805,7 +816,7 @@ namespace ProjectSENA.App
 
         private void UpdateAssistantState(string state, string detail)
         {
-            characterState?.ApplyAssistantState(state, detail);
+            ApplyAssistantStateToCharacter(state, detail);
 
             if (assistantStateText == null)
             {
@@ -813,6 +824,102 @@ namespace ProjectSENA.App
             }
 
             assistantStateText.text = $"{TranslateState(state)}: {TranslateDetail(detail)}";
+        }
+
+        private void ApplyAssistantTextToCharacter(string personaState, bool shouldSpeak)
+        {
+            characterState?.ApplyAssistantText(personaState, shouldSpeak);
+
+            if (shouldSpeak)
+            {
+                BeginCharacterSpeakingHold();
+                return;
+            }
+
+            CancelCharacterSpeakingHold();
+        }
+
+        private void ApplyAssistantStateToCharacter(string state, string detail)
+        {
+            if (ShouldDeferAssistantStateForSpeaking(state))
+            {
+                _hasDeferredAssistantState = true;
+                _deferredAssistantState = state;
+                _deferredAssistantDetail = detail;
+                return;
+            }
+
+            if (!IsIdleAssistantState(state))
+            {
+                CancelCharacterSpeakingHold();
+            }
+
+            characterState?.ApplyAssistantState(state, detail);
+        }
+
+        private void BeginCharacterSpeakingHold()
+        {
+            if (characterState == null || minimumSpeakingPresentationSeconds <= 0f)
+            {
+                return;
+            }
+
+            _characterSpeakingHoldActive = true;
+            _hasDeferredAssistantState = false;
+            _deferredAssistantState = null;
+            _deferredAssistantDetail = null;
+
+            if (_speakingHoldCoroutine != null)
+            {
+                StopCoroutine(_speakingHoldCoroutine);
+            }
+
+            _speakingHoldCoroutine = StartCoroutine(CompleteCharacterSpeakingHoldAfterDelay());
+        }
+
+        private IEnumerator CompleteCharacterSpeakingHoldAfterDelay()
+        {
+            yield return new WaitForSeconds(minimumSpeakingPresentationSeconds);
+
+            _speakingHoldCoroutine = null;
+            _characterSpeakingHoldActive = false;
+
+            if (!_hasDeferredAssistantState)
+            {
+                yield break;
+            }
+
+            string deferredState = _deferredAssistantState;
+            string deferredDetail = _deferredAssistantDetail;
+            _hasDeferredAssistantState = false;
+            _deferredAssistantState = null;
+            _deferredAssistantDetail = null;
+
+            characterState?.ApplyAssistantState(deferredState, deferredDetail);
+        }
+
+        private void CancelCharacterSpeakingHold()
+        {
+            if (_speakingHoldCoroutine != null)
+            {
+                StopCoroutine(_speakingHoldCoroutine);
+                _speakingHoldCoroutine = null;
+            }
+
+            _characterSpeakingHoldActive = false;
+            _hasDeferredAssistantState = false;
+            _deferredAssistantState = null;
+            _deferredAssistantDetail = null;
+        }
+
+        private bool ShouldDeferAssistantStateForSpeaking(string state)
+        {
+            return _characterSpeakingHoldActive && IsIdleAssistantState(state);
+        }
+
+        private static bool IsIdleAssistantState(string state)
+        {
+            return string.Equals(state, "idle", System.StringComparison.OrdinalIgnoreCase);
         }
 
         private void UpdateSendInteractivity()

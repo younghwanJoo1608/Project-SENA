@@ -111,7 +111,7 @@ assistant_state / persona_state / tool_result
 
 ## 2. Live2D Integration
 
-상태: expression-only MVP 구현 및 Unity Editor 검증 완료. Motion은 아직 미연동.
+상태: expression, idle/procedural idle, 기본 motion 연결, speaking mouth MVP를 Unity Editor에서 검증했다.
 
 ### 목표
 
@@ -131,10 +131,12 @@ assistant_state / persona_state / tool_result
 - Live2D SDK 도입 방식 결정. 완료
 - `Assets/ProjectSENA/Characters/` 하위 구조 설계. 완료
 - `.gitignore`에 사용자 제공 모델 경로 확인. 완료
-- 모델 import 절차 문서화. 진행 중
+- 모델 import 절차 문서화. 완료
 - 상태별 expression mapping 작성. 완료
-- 기본 idle 모션 연결. 미진행
-- mouth open parameter를 speaking 이벤트와 연결할 준비. 미진행
+- 기본 idle 모션 연결. 완료
+- 모델 기본 idle motion이 부족한 경우 procedural idle 보완. 완료
+- mouth open parameter를 speaking 이벤트와 연결할 준비. 완료
+- speaking 상태에서 임시 mouth opening 파형 적용. 완료
 
 ### 완료 기준
 
@@ -148,7 +150,16 @@ assistant_state / persona_state / tool_result
 - `SenaCharacterBindingProfile`을 통해 SENA expression key를 실제 Live2D expression에 매핑했다.
 - `idle`, approval 대기, 서버 연결 끊김 상태에서 표정 변화가 확인됐다.
 - Unity 6.3 LTS URP 환경에서 `CubismURPRenderer.asset`과 HDR off 설정으로 Game 뷰 렌더링을 확인했다.
-- Motion, lip-sync, eye tracking은 아직 완료 기준에서 제외한다. 다음 작업에서 별도 기준을 세운다.
+- SnowBear Majo 테스트 모델의 idle motion 후보는 `Scene1.motion3.json` 하나로 확인했다.
+- Motion은 `CubismFadeController`, `.fadeMotionList`, `CubismMotionController`, `AnimationClip` 매핑을 통해 연결한다.
+- `Scene1.motion3.json`이 기본 idle로 체감되기 어려운 모델 고유 파라미터를 움직이는 것을 확인했다.
+- `Live2DProceduralIdleDriver`로 `ParamAngleX/Y/Z`, `ParamBodyAngleX/Y`, `ParamBreath` 기반의 약한 대기 움직임을 보완했다.
+- 기본 실행 로그와 모션 연결용 수동 디버그 메뉴를 정리했다.
+- `CharacterPresentationMapper`와 `SenaCharacterBindingProfile`의 expression/motion key 계약을 EditMode 테스트로 고정했다.
+- `Live2DSpeakingMouthDriver`를 추가해 `SenaCharacterPresentation.IsSpeaking`을 `CubismMouthController.MouthOpening`으로 전달하는 기초 speaking 표현을 구현했다.
+- 짧은 batch 응답에서도 speaking 표현이 보이도록 Unity client에 `minimumSpeakingPresentationSeconds` 기반 캐릭터 전용 idle 복귀 지연을 추가했다.
+- speaking 상태에서 입이 움직이고 idle 복귀 후 닫히는 것을 확인했다.
+- lip-sync, eye tracking은 아직 완료 기준에서 제외한다. 다음 작업에서 별도 기준을 세운다.
 
 ## 3. Voice Foundation
 
@@ -283,14 +294,16 @@ Phase 2에서 추가되는 character, voice, vision 기능이 Phase 1.5의 안�
 4. Live2D SDK/모델 도입 방식 조사. 완료
 5. Live2D fallback-safe import 구조 작성. 완료
 6. Live2D expression-only MVP 검증. 완료
-7. Live2D motion 연결 기준 설계
-8. TTS adapter 구체화와 Unity audio playback
-9. speaking 상태와 mouth/표정 연결
-10. STT 입력 UX 설계 및 최소 구현
-11. Vision adapter interface 추가
-12. `capture_screen -> vision summary -> response` 루프 구현
-13. Planner boundary 정리
-14. Phase 2 통합 회귀 테스트
+7. Live2D motion 연결 기준 설계. 완료
+8. Live2D idle motion/procedural idle 검증. 완료
+9. 상태별 expression/motion 매핑 안정화. 완료
+10. speaking 상태와 mouth/표정 연결. 완료
+11. TTS adapter 구체화와 Unity audio playback
+12. STT 입력 UX 설계 및 최소 구현
+13. Vision adapter interface 추가
+14. `capture_screen -> vision summary -> response` 루프 구현
+15. Planner boundary 정리
+16. Phase 2 통합 회귀 테스트
 
 ## 첫 번째 구현 과제
 
